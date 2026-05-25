@@ -1,0 +1,513 @@
+'use strict';
+/**
+ * db.js — Capa SQLite local
+ * Fuente de lectura para todas las listas; SharePoint es la fuente de verdad.
+ * El syncService mantiene este archivo sincronizado en segundo plano.
+ */
+
+const Database = require('better-sqlite3');
+const path     = require('path');
+require('dotenv').config();
+
+const DB_PATH = process.env.SQLITE_PATH || path.join(__dirname, '../data/local.db');
+
+let _db = null;
+
+function db() {
+  if (_db) return _db;
+  _db = new Database(DB_PATH);
+  _db.pragma('journal_mode = WAL');   // escrituras concurrentes sin bloquear lecturas
+  _db.pragma('synchronous = NORMAL'); // equilibrio seguridad/velocidad
+  _db.pragma('foreign_keys = ON');
+  _crearEsquema(_db);
+  return _db;
+}
+
+function _crearEsquema(d) {
+  d.exec(`
+    -- ── Historial de precios ────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS historial_precios (
+      sp_id       TEXT PRIMARY KEY,
+      insumo      TEXT NOT NULL DEFAULT '',
+      insumoNorm  TEXT NOT NULL DEFAULT '',
+      proveedor   TEXT NOT NULL DEFAULT '',
+      nit         TEXT NOT NULL DEFAULT '',
+      precio      REAL NOT NULL DEFAULT 0,
+      fecha       TEXT NOT NULL DEFAULT '',
+      zona        TEXT NOT NULL DEFAULT '',
+      proyecto    TEXT NOT NULL DEFAULT '',
+      documento   TEXT NOT NULL DEFAULT '',
+      cantidad    REAL NOT NULL DEFAULT 0,
+      unidad      TEXT NOT NULL DEFAULT '',
+      updated_at  TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_hp_insumo  ON historial_precios(insumoNorm);
+    CREATE INDEX IF NOT EXISTS idx_hp_fecha   ON historial_precios(fecha DESC);
+    CREATE INDEX IF NOT EXISTS idx_hp_prov    ON historial_precios(nit);
+
+    -- ── Proveedores ─────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS proveedores (
+      sp_id      TEXT PRIMARY KEY,
+      nit        TEXT NOT NULL DEFAULT '',
+      nombre     TEXT NOT NULL DEFAULT '',
+      zona       TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_prov_nit ON proveedores(nit);
+
+    -- ── Insumos ─────────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS insumos (
+      sp_id        TEXT PRIMARY KEY,
+      nombre       TEXT NOT NULL DEFAULT '',
+      nombreNorm   TEXT NOT NULL DEFAULT '',
+      categoria    TEXT NOT NULL DEFAULT '',
+      subcategoria TEXT NOT NULL DEFAULT '',
+      unidad       TEXT NOT NULL DEFAULT '',
+      activo       INTEGER NOT NULL DEFAULT 1,
+      updated_at   TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_ins_norm ON insumos(nombreNorm);
+
+    -- ── Proyectos ───────────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS proyectos (
+      sp_id      TEXT PRIMARY KEY,
+      nombre     TEXT NOT NULL DEFAULT '',
+      zona       TEXT NOT NULL DEFAULT '',
+      activo     INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    -- ── Documentos (esquema flexible vía JSON) ───────────────────────────────
+    -- Se usan JSON para no atarse a un schema rígido que cambia frecuentemente.
+    CREATE TABLE IF NOT EXISTS requerimientos (
+      sp_id      TEXT PRIMARY KEY,
+      data       TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS ordenes_compra (
+      sp_id      TEXT PRIMARY KEY,
+      data       TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS ordenes_servicio (
+      sp_id      TEXT PRIMARY KEY,
+      data       TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS remisiones (
+      sp_id      TEXT PRIMARY KEY,
+      data       TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+
+    -- ── Movimientos de inventario ────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS movimientos_inventario (
+      sp_id      TEXT PRIMARY KEY,
+      data       TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_mov_proyecto ON movimientos_inventario(
+      json_extract(data, '$.proyecto')
+    );
+    CREATE INDEX IF NOT EXISTS idx_mov_tipo ON movimientos_inventario(
+      json_extract(data, '$.tipo')
+    );
+
+    -- ── Estado de sincronización ─────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS sync_state (
+      lista      TEXT PRIMARY KEY,
+      last_sync  TEXT NOT NULL DEFAULT '',
+      item_count INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+}
+
+// ── Normalización (igual que en servidor-cotizaciones.js) ─────────────────────
+function norm(s) {
+  return String(s || '').toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Z0-9\s\/\-]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+// ── UPSERT helpers ────────────────────────────────────────────────────────────
+
+const UPSERT_HP = `
+  INSERT INTO historial_precios
+    (sp_id, insumo, insumoNorm, proveedor, nit, precio, fecha, zona, proyecto, documento, cantidad, unidad, updated_at)
+  VALUES (@sp_id,@insumo,@insumoNorm,@proveedor,@nit,@precio,@fecha,@zona,@proyecto,@documento,@cantidad,@unidad,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET
+    insumo=excluded.insumo, insumoNorm=excluded.insumoNorm, proveedor=excluded.proveedor,
+    nit=excluded.nit, precio=excluded.precio, fecha=excluded.fecha, zona=excluded.zona,
+    proyecto=excluded.proyecto, documento=excluded.documento,
+    cantidad=excluded.cantidad, unidad=excluded.unidad, updated_at=excluded.updated_at`;
+
+const UPSERT_PROV = `
+  INSERT INTO proveedores (sp_id,nit,nombre,zona,updated_at)
+  VALUES (@sp_id,@nit,@nombre,@zona,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET nit=excluded.nit,nombre=excluded.nombre,zona=excluded.zona,updated_at=excluded.updated_at`;
+
+const UPSERT_INS = `
+  INSERT INTO insumos (sp_id,nombre,nombreNorm,categoria,subcategoria,unidad,activo,updated_at)
+  VALUES (@sp_id,@nombre,@nombreNorm,@categoria,@subcategoria,@unidad,@activo,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET
+    nombre=excluded.nombre,nombreNorm=excluded.nombreNorm,categoria=excluded.categoria,
+    subcategoria=excluded.subcategoria,unidad=excluded.unidad,activo=excluded.activo,updated_at=excluded.updated_at`;
+
+const UPSERT_PROY = `
+  INSERT INTO proyectos (sp_id,nombre,zona,activo,updated_at)
+  VALUES (@sp_id,@nombre,@zona,@activo,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET nombre=excluded.nombre,zona=excluded.zona,activo=excluded.activo,updated_at=excluded.updated_at`;
+
+const UPSERT_DOC = (tabla) => `
+  INSERT INTO ${tabla} (sp_id,data,updated_at)
+  VALUES (@sp_id,@data,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`;
+
+// ── Escritura masiva (bulk upsert dentro de una transacción) ──────────────────
+
+function bulkUpsertHistorial(rows) {
+  const stmt = db().prepare(UPSERT_HP);
+  const tx   = db().transaction((items) => {
+    for (const f of items) {
+      stmt.run({
+        sp_id:      String(f.id || f.sp_id || ''),
+        insumo:     String(f.insumo || '').trim(),
+        insumoNorm: norm(f.insumo),
+        proveedor:  String(f.nombreProveedor || f.proveedor || '').trim(),
+        nit:        String(f.nitProveedor    || f.nit       || '').trim(),
+        precio:     parseFloat(f.precioUnitario || f.precio || 0) || 0,
+        fecha:      String(f.fecha || '').trim(),
+        zona:       String(f.zona  || '').trim(),
+        proyecto:   String(f.proyecto || '').trim(),
+        documento:  String(f.numeroCompra || f.documento || '').trim(),
+        cantidad:   parseFloat(f.cantidad || 0) || 0,
+        unidad:     String(f.unidad || '').trim(),
+        updated_at: String(f.updated_at || f.Modified || new Date().toISOString()),
+      });
+    }
+  });
+  tx(rows);
+}
+
+// Versión async: divide en chunks de 500 cediendo el event loop entre cada lote.
+// Evita bloquear requests HTTP durante el sync de 3000+ filas.
+async function bulkUpsertHistorialAsync(rows) {
+  const CHUNK = 500;
+  const stmt = db().prepare(UPSERT_HP);
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const tx = db().transaction((items) => {
+      for (const f of items) {
+        stmt.run({
+          sp_id:      String(f.id || f.sp_id || ''),
+          insumo:     String(f.insumo || '').trim(),
+          insumoNorm: norm(f.insumo),
+          proveedor:  String(f.nombreProveedor || f.proveedor || '').trim(),
+          nit:        String(f.nitProveedor    || f.nit       || '').trim(),
+          precio:     parseFloat(f.precioUnitario || f.precio || 0) || 0,
+          fecha:      String(f.fecha || '').trim(),
+          zona:       String(f.zona  || '').trim(),
+          proyecto:   String(f.proyecto || '').trim(),
+          documento:  String(f.numeroCompra || f.documento || '').trim(),
+          cantidad:   parseFloat(f.cantidad || 0) || 0,
+          unidad:     String(f.unidad || '').trim(),
+          updated_at: String(f.updated_at || f.Modified || new Date().toISOString()),
+        });
+      }
+    });
+    tx(chunk);
+    if (i + CHUNK < rows.length) await new Promise(r => setImmediate(r));
+  }
+}
+
+function bulkUpsertProveedores(rows) {
+  const stmt = db().prepare(UPSERT_PROV);
+  const tx   = db().transaction((items) => {
+    for (const f of items) {
+      stmt.run({
+        sp_id:      String(f.id || f.sp_id || ''),
+        nit:        String(f.nit || f.Identificacion || '').trim().replace(/\.0$/, ''),
+        nombre:     String(f.razonSocial || f.nombre || f['Razon social'] || '').trim(),
+        zona:       String(f.zona || '').trim(),
+        updated_at: String(f.updated_at || f.Modified || new Date().toISOString()),
+      });
+    }
+  });
+  tx(rows);
+}
+
+function bulkUpsertInsumos(rows) {
+  const stmt = db().prepare(UPSERT_INS);
+  const tx   = db().transaction((items) => {
+    for (const f of items) {
+      const nombre = String(f.nombre || '').trim();
+      stmt.run({
+        sp_id:       String(f.id || f.sp_id || ''),
+        nombre,
+        nombreNorm:  norm(nombre),
+        categoria:   String(f.categoria    || '').trim(),
+        subcategoria:String(f.subcategoria || '').trim(),
+        unidad:      String(f.unidadEstandar || f.unidad || '').trim(),
+        activo:      f.activo === false ? 0 : 1,
+        updated_at:  String(f.updated_at || f.Modified || new Date().toISOString()),
+      });
+    }
+  });
+  tx(rows);
+}
+
+function bulkUpsertProyectos(rows) {
+  const stmt = db().prepare(UPSERT_PROY);
+  const tx   = db().transaction((items) => {
+    for (const f of items) {
+      stmt.run({
+        sp_id:      String(f.id || f.sp_id || ''),
+        nombre:     String(f.codigo || f.nombre || '').trim(),
+        zona:       String(f.zona   || '').trim(),
+        activo:     f.activo === false ? 0 : 1,
+        updated_at: String(f.updated_at || f.Modified || new Date().toISOString()),
+      });
+    }
+  });
+  tx(rows);
+}
+
+function bulkUpsertDocs(tabla, rows) {
+  const stmt = db().prepare(UPSERT_DOC(tabla));
+  const tx   = db().transaction((items) => {
+    for (const it of items) {
+      const spId = String(it.id || it.sp_id || '');
+      const fields = it.fields || it;
+      stmt.run({
+        sp_id:      spId,
+        data:       JSON.stringify({ id: spId, ...fields }),
+        updated_at: String(fields.Modified || fields.updated_at || new Date().toISOString()),
+      });
+    }
+  });
+  tx(rows);
+}
+
+// ── Sync state ────────────────────────────────────────────────────────────────
+
+function setSyncState(lista, count) {
+  db().prepare(`
+    INSERT INTO sync_state (lista, last_sync, item_count)
+    VALUES (@lista, @ts, @count)
+    ON CONFLICT(lista) DO UPDATE SET last_sync=excluded.last_sync, item_count=excluded.item_count
+  `).run({ lista, ts: new Date().toISOString(), count });
+}
+
+function getSyncState(lista) {
+  return db().prepare('SELECT * FROM sync_state WHERE lista=?').get(lista) || null;
+}
+
+function getAllSyncState() {
+  return db().prepare('SELECT * FROM sync_state').all();
+}
+
+// ── Lecturas de datos ─────────────────────────────────────────────────────────
+
+function getHistorialPrecios() {
+  return db().prepare('SELECT * FROM historial_precios ORDER BY fecha DESC').all();
+}
+
+function getProveedores() {
+  return db().prepare('SELECT * FROM proveedores ORDER BY nombre').all();
+}
+
+function getInsumos({ soloActivos = true } = {}) {
+  const q = soloActivos
+    ? 'SELECT * FROM insumos WHERE activo=1 ORDER BY nombre'
+    : 'SELECT * FROM insumos ORDER BY nombre';
+  return db().prepare(q).all();
+}
+
+function getProyectos({ soloActivos = true } = {}) {
+  const q = soloActivos
+    ? 'SELECT * FROM proyectos WHERE activo=1 ORDER BY nombre'
+    : 'SELECT * FROM proyectos ORDER BY nombre';
+  return db().prepare(q).all();
+}
+
+function getRequerimientos() {
+  return db().prepare('SELECT data FROM requerimientos').all().map(r => JSON.parse(r.data));
+}
+
+function getOrdenesCompra() {
+  return db().prepare('SELECT data FROM ordenes_compra').all().map(r => JSON.parse(r.data));
+}
+
+function getOrdenesServicio() {
+  return db().prepare('SELECT data FROM ordenes_servicio').all().map(r => JSON.parse(r.data));
+}
+
+function getRemisiones() {
+  return db().prepare('SELECT data FROM remisiones').all().map(r => JSON.parse(r.data));
+}
+
+function getMovimientosInventario({ proyecto = null } = {}) {
+  const baseWhere =
+    "json_extract(data,'$.estado')!='anulado' " +
+    "AND (json_extract(data,'$.estadoDoc') IS NULL OR json_extract(data,'$.estadoDoc')!='anulado')";
+  if (proyecto) {
+    return db().prepare(
+      `SELECT data FROM movimientos_inventario WHERE json_extract(data,'$.proyecto')=? AND ${baseWhere}`
+    ).all(proyecto).map(r => JSON.parse(r.data));
+  }
+  return db().prepare(
+    `SELECT data FROM movimientos_inventario WHERE ${baseWhere}`
+  ).all().map(r => JSON.parse(r.data));
+}
+
+// Calcula stock actual: Σ entradas − Σ salidas, agrupado por insumo. Opcional: filtrar por proyecto.
+function getStock(proyecto = null) {
+  const movs = getMovimientosInventario(proyecto ? { proyecto } : undefined);
+  const mapa = {};
+  for (const m of movs) {
+    const key = `${m.insumo}|||${m.unidad || ''}`;
+    if (!mapa[key]) mapa[key] = {
+      insumo: m.insumo, unidad: m.unidad || '',
+      precioUnitario: 0, entradas: 0, salidas: 0,
+    };
+    const entry = mapa[key];
+    const cant = Number(m.cantidad) || 0;
+    if (m.tipo === 'entrada') {
+      entry.entradas += cant;
+      entry.precioUnitario = Number(m.precioUnitario) || entry.precioUnitario;
+    } else if (m.tipo === 'salida') {
+      entry.salidas += cant;
+    }
+  }
+  return Object.values(mapa).map(e => ({
+    ...e,
+    stock: e.entradas - e.salidas,
+    valorInventario: (e.entradas - e.salidas) * e.precioUnitario,
+    valorGastado:    e.salidas * e.precioUnitario,
+  })).sort((a, b) => {
+    if ((a.stock > 0) !== (b.stock > 0)) return b.stock > 0 ? 1 : -1;
+    return b.valorInventario - a.valorInventario || b.valorGastado - a.valorGastado;
+  });
+}
+
+// Devuelve las OC ids que ya tienen al menos una entrada de inventario
+function getOcIdsConEntrada() {
+  const rows = db().prepare(
+    "SELECT DISTINCT json_extract(data,'$.ocId') AS ocId FROM movimientos_inventario WHERE json_extract(data,'$.tipo')='entrada' AND json_extract(data,'$.estado')!='anulado'"
+  ).all();
+  return new Set(rows.map(r => r.ocId).filter(Boolean));
+}
+
+// Genera el siguiente consecutivo global de documento (EA-XXXX / SA-XXXX)
+// El contador es global (no por proyecto) para evitar duplicados entre proyectos
+function getNextDocRef(tipo, proyecto) {
+  const prefix = tipo === 'entrada' ? 'EA' : 'SA';
+  const row = db().prepare(
+    "SELECT MAX(CAST(SUBSTR(json_extract(data,'$.documentoRef'),4) AS INTEGER)) AS maxN " +
+    "FROM movimientos_inventario " +
+    "WHERE json_extract(data,'$.tipo')=? " +
+    "  AND json_extract(data,'$.documentoRef') LIKE ? " +
+    "  AND (json_extract(data,'$.estadoDoc')='aprobado' OR json_extract(data,'$.estadoDoc') IS NULL)"
+  ).get(tipo, `${prefix}-%`);
+  const n = (row?.maxN || 0) + 1;
+  return `${prefix}-${String(n).padStart(4, '0')}`;
+}
+
+// Agrupa movimientos en documentos para la vista de registros
+function getDocumentosInventario({ tipo = null } = {}) {
+  let sql = "SELECT data FROM movimientos_inventario WHERE 1=1";
+  const params = [];
+  if (tipo) { sql += " AND json_extract(data,'$.tipo')=?"; params.push(tipo); }
+  const movs = db().prepare(sql).all(...params).map(r => JSON.parse(r.data));
+
+  const docs = {};
+  for (const m of movs) {
+    const groupKey = m.documentoRef || `__BORR__${m.batchId || m.fechaCreacion}`;
+    if (!docs[groupKey]) docs[groupKey] = {
+      ref:       m.documentoRef || null,
+      batchId:   m.batchId || groupKey,
+      tipo:      m.tipo,
+      estadoDoc: m.estadoDoc || 'aprobado',
+      fecha:     m.fecha,
+      proyecto:  m.proyecto,
+      numeroOC:  m.numeroOC || '',
+      items:     [],
+      total:     0,
+    };
+    docs[groupKey].items.push(m);
+    docs[groupKey].total += Number(m.valorTotal) || 0;
+  }
+  return Object.values(docs).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+}
+
+// ── Escritura individual de documentos (después de guardar en SP) ─────────────
+
+function upsertDocumento(tabla, spItem) {
+  const spId   = String(spItem.id || '');
+  const fields = spItem.fields || spItem;
+  db().prepare(UPSERT_DOC(tabla)).run({
+    sp_id:      spId,
+    data:       JSON.stringify({ id: spId, ...fields }),
+    updated_at: String(fields.Modified || new Date().toISOString()),
+  });
+}
+
+function upsertHistorialFila(fila) {
+  bulkUpsertHistorial([fila]);
+}
+
+// ── Conteo ────────────────────────────────────────────────────────────────────
+
+function counts() {
+  const tablas = [
+    'historial_precios','proveedores','insumos','proyectos',
+    'requerimientos','ordenes_compra','ordenes_servicio','remisiones','movimientos_inventario',
+  ];
+  const result = {};
+  for (const t of tablas) {
+    result[t] = db().prepare(`SELECT COUNT(*) AS n FROM ${t}`).get().n;
+  }
+  return result;
+}
+
+function isReady() {
+  try {
+    db();
+    return true;
+  } catch { return false; }
+}
+
+module.exports = {
+  db,
+  bulkUpsertHistorial,
+  bulkUpsertHistorialAsync,
+  bulkUpsertProveedores,
+  bulkUpsertInsumos,
+  bulkUpsertProyectos,
+  bulkUpsertDocs,
+  setSyncState,
+  getSyncState,
+  getAllSyncState,
+  getHistorialPrecios,
+  getProveedores,
+  getInsumos,
+  getProyectos,
+  getRequerimientos,
+  getOrdenesCompra,
+  getOrdenesServicio,
+  getRemisiones,
+  getMovimientosInventario,
+  getStock,
+  getOcIdsConEntrada,
+  getNextDocRef,
+  getDocumentosInventario,
+  upsertDocumento,
+  upsertHistorialFila,
+  counts,
+  isReady,
+  norm,
+};

@@ -1,0 +1,87 @@
+'use strict';
+/**
+ * parsearAsunto.js
+ * Extrae consecutivo, fecha y proyecto del asunto del correo.
+ * Formato: SOLICITUD REQUERIMIENTO {CONS} {YYYYMMDD} {PROYECTO}
+ * Ejemplo: SOLICITUD REQUERIMIENTO 0001 20260410 MISTRAL
+ */
+
+// Prefijos aceptados (ordenados de más específico a menos para match correcto)
+const PREFIJOS = ['SOLICITUD DE REQUERIMIENTO', 'SOLICITUD REQUERIMIENTO'];
+
+function parsearAsunto(asunto) {
+  if (!asunto) return { valido: false, error: 'Asunto vacío' };
+
+  const norm = asunto.trim().toUpperCase();
+
+  // Verificar que sea una solicitud de requerimiento (acepta "DE" opcional)
+  const prefijo = PREFIJOS.find(p => norm.startsWith(p));
+  if (!prefijo) {
+    return { valido: false, error: 'El asunto no corresponde a una solicitud de requerimiento' };
+  }
+
+  // Extraer partes después del prefijo (usando la longitud del prefijo real)
+  const resto = asunto.trim().substring(prefijo.length).trim();
+
+  // Patrón: {CONSECUTIVO} [-] {YYYYMMDD} {PROYECTO...}
+  // El separador entre consecutivo y fecha acepta guion opcional (ej. "0003 - 20260507")
+  const patron = /^(\d{1,6})\s*[-–]?\s*(\d{8})\s+(.+)$/;
+  const match  = resto.match(patron);
+
+  if (!match) {
+    return {
+      valido: false,
+      error:  'Formato de asunto inválido. Se esperaba: SOLICITUD REQUERIMIENTO {CONSECUTIVO} {YYYYMMDD} {PROYECTO}',
+      raw:    asunto,
+    };
+  }
+
+  const [, consecutivoRaw, fechaRaw, proyectoRaw] = match;
+
+  // Parsear fecha YYYYMMDD
+  const anio = fechaRaw.substring(0, 4);
+  const mes  = fechaRaw.substring(4, 6);
+  const dia  = fechaRaw.substring(6, 8);
+  const fecha = new Date(`${anio}-${mes}-${dia}`);
+
+  if (isNaN(fecha.getTime())) {
+    return { valido: false, error: `Fecha inválida en el asunto: ${fechaRaw}`, raw: asunto };
+  }
+
+  return {
+    valido:       true,
+    consecutivo:  consecutivoRaw.padStart(4, '0'),
+    fecha,
+    fechaTexto:   `${dia}/${mes}/${anio}`,
+    proyecto:     proyectoRaw.trim(),
+    raw:          asunto,
+  };
+}
+
+/**
+ * Busca el código de proyecto completo en la tabla de proyectos
+ * usando el fragmento extraído del asunto (match parcial).
+ */
+function resolverProyecto(fragmento, proyPorCodigo) {
+  if (!fragmento) return null;
+
+  const norm = fragmento.trim().toUpperCase();
+
+  // 1. Match exacto
+  if (proyPorCodigo[norm]) return proyPorCodigo[norm];
+
+  // 2. Match parcial: el fragmento aparece en algún código
+  for (const [codigo, proyecto] of Object.entries(proyPorCodigo)) {
+    if (codigo.includes(norm)) return proyecto;
+  }
+
+  // 3. Match parcial inverso: algún código aparece en el fragmento
+  for (const [codigo, proyecto] of Object.entries(proyPorCodigo)) {
+    const palabras = codigo.split(/[\s\-]+/).filter(p => p.length > 3);
+    if (palabras.some(p => norm.includes(p))) return proyecto;
+  }
+
+  return null;
+}
+
+module.exports = { parsearAsunto, resolverProyecto };

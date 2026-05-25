@@ -1,0 +1,21 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno con secretos
+.env
+
+# Base de datos SQLite (runtime)
+data/local.db
+data/local.db-shm
+data/local.db-wal
+
+# Archivos temporales y logs
+logs/
+temp/
+*.log
+
+# Carpeta interna de Claude Code
+.claude/
+
+# Archivos archivados
+_archivo/

@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cotizaciones — Civiltech</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0f1117; --surface:#171b25; --card:#1e2330; --border:#2a3045; --border-hi:#3d4d6a;
+  --accent:#3d7fff; --accent-lo:rgba(61,127,255,.12); --accent-hi:#6fa3ff;
+  --success:#2eb87e; --warn:#e09c3a; --danger:#e05050;
+  --txt:#d6dae8; --txt-2:#7b85a0; --txt-3:#4a5270;
+  --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif; --r:6px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;min-height:100vh;}
+
+header{display:flex;align-items:center;gap:16px;padding:18px 32px;border-bottom:1px solid var(--border);background:var(--surface);}
+.logo-mark{width:32px;height:32px;background:var(--accent);clip-path:polygon(0 100%,50% 0,100% 100%);flex-shrink:0;}
+header h1{font-size:15px;font-weight:600;}
+header span{font-size:12px;color:var(--txt-2);font-family:var(--mono);}
+.badge{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--accent-lo);color:var(--accent-hi);border:1px solid rgba(61,127,255,.3);padding:3px 10px;border-radius:20px;}
+
+main{max-width:1100px;margin:0 auto;padding:32px 24px;display:grid;gap:24px;}
+
+/* Tabs */
+.tabs{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:4px;width:fit-content;}
+.tab{padding:8px 20px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;color:var(--txt-2);border:none;background:transparent;transition:all .15s;}
+.tab.active{background:var(--accent);color:#fff;}
+.tab:hover:not(.active){color:var(--txt);background:var(--border);}
+
+.panel{display:none;}
+.panel.active{display:grid;gap:24px;}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.card-head{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}
+.card-head h2{font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-2);}
+.step-num{width:22px;height:22px;border-radius:50%;background:var(--accent);display:grid;place-items:center;font-size:11px;font-weight:600;font-family:var(--mono);flex-shrink:0;}
+.card-body{padding:20px;}
+
+/* Drop zone */
+#zona-drop{border:1.5px dashed var(--border-hi);border-radius:var(--r);padding:40px 24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;position:relative;}
+#zona-drop.drag-over{border-color:var(--accent);background:var(--accent-lo);}
+#zona-drop input{position:absolute;inset:0;opacity:0;cursor:pointer;}
+.drop-icon{width:40px;height:40px;margin:0 auto 12px;border:1.5px solid var(--border-hi);border-radius:8px;display:grid;place-items:center;color:var(--txt-2);font-size:20px;}
+.drop-title{font-size:14px;font-weight:500;margin-bottom:6px;}
+.drop-sub{font-size:12px;color:var(--txt-2);}
+#nombre-archivo{margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--accent-hi);}
+
+.fila-ctrl{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+.campo{display:flex;flex-direction:column;gap:6px;flex:1;min-width:160px;}
+.campo label{font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2);}
+.campo input,.campo select{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;color:var(--txt);font-family:var(--sans);font-size:13px;transition:border-color .15s;}
+.campo input:focus,.campo select:focus{outline:none;border-color:var(--accent);}
+.campo input::placeholder{color:var(--txt-3);}
+
+.btn{padding:9px 20px;border-radius:var(--r);border:none;cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:7px;transition:opacity .15s,transform .1s;}
+.btn:active{transform:scale(.97);}
+.btn-primary{background:var(--accent);color:#fff;}
+.btn-primary:hover{opacity:.88;}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed;}
+.btn-success{background:var(--success);color:#fff;}
+.btn-success:hover{opacity:.88;}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--txt-2);}
+.btn-ghost:hover{border-color:var(--border-hi);color:var(--txt);}
+.btn-sm{padding:5px 12px;font-size:12px;}
+.btn-warn{background:var(--warn);color:#fff;}
+.btn-warn:hover{opacity:.88;}
+
+.spinner{width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;display:none;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.estado{padding:10px 14px;border-radius:var(--r);font-size:13px;display:none;align-items:center;gap:10px;}
+.estado.visible{display:flex;}
+.estado.cargando{background:var(--accent-lo);border:1px solid rgba(61,127,255,.3);color:var(--accent-hi);}
+.estado.ok{background:rgba(46,184,126,.1);border:1px solid rgba(46,184,126,.3);color:var(--success);}
+.estado.error{background:rgba(224,80,80,.1);border:1px solid rgba(224,80,80,.3);color:var(--danger);}
+
+.tabla-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r);}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+thead{background:var(--surface);}
+th{padding:10px 12px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2);border-bottom:1px solid var(--border);white-space:nowrap;}
+td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+tr.excluida td{opacity:.4;}
+.td-input{background:var(--surface);border:1px solid transparent;border-radius:4px;padding:5px 8px;color:var(--txt);font-family:var(--sans);font-size:13px;width:100%;transition:border-color .15s;}
+.td-input:focus{outline:none;border-color:var(--accent);}
+.precio-nuevo{color:var(--accent-hi);font-family:var(--mono);font-weight:500;}
+.tag-nuevo{font-size:10px;background:var(--accent-lo);color:var(--accent-hi);border:1px solid rgba(61,127,255,.3);padding:2px 7px;border-radius:20px;font-family:var(--mono);}
+.tag-existe{font-size:10px;background:rgba(46,184,126,.1);color:var(--success);border:1px solid rgba(46,184,126,.3);padding:2px 7px;border-radius:20px;font-family:var(--mono);}
+.check-excluir{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);}
+
+.resumen-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;}
+.resumen-item{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;}
+.resumen-item .num{font-size:28px;font-weight:300;font-family:var(--mono);color:var(--txt);}
+.resumen-item .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2);margin-top:4px;}
+
+#seccion-revision{display:none;}
+#seccion-exito{display:none;text-align:center;padding:48px 20px;}
+.exito-icon{font-size:48px;margin-bottom:16px;}
+.exito-txt{font-size:16px;font-weight:500;margin-bottom:8px;}
+.exito-sub{font-size:13px;color:var(--txt-2);}
+
+/* Sección OC */
+.oc-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media(max-width:600px){.oc-grid{grid-template-columns:1fr;}}
+#seccion-oc-exito{display:none;background:rgba(46,184,126,.1);border:1px solid rgba(46,184,126,.3);border-radius:var(--r);padding:16px;color:var(--success);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark"></div>
+  <div>
+    <h1>Cotizaciones — Civiltech</h1>
+    <span>Actualización de precios y generación de OC</span>
+  </div>
+  <div class="badge">v2.0 · local</div>
+</header>
+
+<main>
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="cambiarTab('precios')">📊 Actualizar precios</button>
+    <button class="tab" onclick="cambiarTab('oc')">📄 Generar OC desde cotización</button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       TAB 1: ACTUALIZAR PRECIOS
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="tab-precios" class="panel active">
+
+    <div class="card" id="seccion-carga">
+      <div class="card-head"><div class="step-num">1</div><h2>Cargar cotización</h2></div>
+      <div class="card-body" style="display:grid;gap:20px;">
+        <div id="zona-drop">
+          <input type="file" id="input-archivo" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg">
+          <div class="drop-icon">📄</div>
+          <div class="drop-title">Arrastra el archivo aquí o haz clic para seleccionar</div>
+          <div class="drop-sub">PDF, Excel (.xlsx / .xls), CSV, o imagen (PNG / JPG)</div>
+          <div id="nombre-archivo"></div>
+        </div>
+        <div class="fila-ctrl">
+          <div class="campo">
+            <label>Proveedor (opcional)</label>
+            <input type="text" id="prov-manual" placeholder="Se detecta del documento" list="lista-proveedores">
+            <datalist id="lista-proveedores"></datalist>
+          </div>
+          <div class="campo" style="max-width:200px;">
+            <label>Proyecto (opcional)</label>
+            <select id="proy-manual"><option value="">— Detectar del documento —</option></select>
+          </div>
+          <div class="campo" style="max-width:180px;">
+            <label>Fecha de vigencia</label>
+            <input type="date" id="fecha-vigencia">
+          </div>
+          <div class="campo" style="max-width:180px;">
+            <label>N° Cotización</label>
+            <input type="text" id="num-cot" placeholder="COT-2026-001">
+          </div>
+        </div>
+        <div id="estado-extraccion" class="estado">
+          <div class="spinner" id="spinner-ext"></div>
+          <span id="msg-estado"></span>
+        </div>
+        <div>
+          <button class="btn btn-primary" id="btn-extraer" disabled>
+            <div class="spinner" id="spinner-btn"></div>
+            <span>Extraer precios con IA</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="seccion-revision">
+      <div class="card">
+        <div class="card-head">
+          <div class="step-num">2</div><h2>Revisar y confirmar</h2>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="agregarFila()">+ Fila</button>
+            <button class="btn btn-ghost btn-sm" onclick="reiniciar()">✕ Cancelar</button>
+          </div>
+        </div>
+        <div class="card-body" style="display:grid;gap:16px;">
+          <div class="resumen-grid" id="resumen-grid"></div>
+          <div class="tabla-wrap">
+            <table>
+              <thead><tr>
+                <th style="width:32px;"></th>
+                <th>Insumo</th><th style="width:70px;">Cant.</th><th style="width:60px;">Unidad</th>
+                <th style="width:120px;">Precio unit.</th><th>Proveedor</th><th style="width:90px;">NIT</th>
+                <th style="width:100px;">Vigencia</th><th>Proyecto</th><th style="width:80px;">Estado</th>
+              </tr></thead>
+              <tbody id="tabla-cuerpo"></tbody>
+            </table>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-success" id="btn-confirmar" onclick="confirmar()">
+              <div class="spinner" id="spinner-conf"></div>
+              <span>Guardar en base de datos</span>
+            </button>
+            <span style="font-size:12px;color:var(--txt-2);" id="lbl-seleccionadas"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="seccion-exito">
+      <div class="card-body" style="text-align:center;padding:48px 20px;">
+        <div class="exito-icon">✓</div>
+        <div class="exito-txt" id="exito-txt">Precios actualizados</div>
+        <div class="exito-sub" id="exito-sub"></div>
+        <br>
+        <button class="btn btn-ghost" onclick="reiniciar()" style="margin:0 auto;">Cargar otra cotización</button>
+      </div>
+    </div>
+
+  </div><!-- /tab-precios -->
+
+  <!-- ═══════════════════════════════════════════════════════════
+       TAB 2: GENERAR OC DESDE COTIZACIÓN
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="tab-oc" class="panel">
+
+    <div class="card">
+      <div class="card-head"><div class="step-num">1</div><h2>Cargar cotización del proveedor</h2></div>
+      <div class="card-body" style="display:grid;gap:20px;">
+        <div id="zona-drop-oc">
+          <div style="border:1.5px dashed var(--border-hi);border-radius:var(--r);padding:40px 24px;text-align:center;cursor:pointer;position:relative;">
+            <input type="file" id="input-archivo-oc" accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg" style="position:absolute;inset:0;opacity:0;cursor:pointer;">
+            <div class="drop-icon">📄</div>
+            <div class="drop-title">Arrastra la cotización del proveedor</div>
+            <div class="drop-sub">PDF, Excel, imagen — la IA extrae todos los ítems y precios</div>
+            <div id="nombre-archivo-oc" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--accent-hi);"></div>
+          </div>
+        </div>
+
+        <div class="oc-grid">
+          <div class="campo">
+            <label>Proyecto * (requerido)</label>
+            <select id="oc-proyecto" required>
+              <option value="">— Selecciona el proyecto —</option>
+            </select>
+          </div>
+          <div class="campo">
+            <label>Proveedor (opcional — se detecta del documento)</label>
+            <input type="text" id="oc-proveedor" placeholder="Nombre del proveedor" list="lista-proveedores-oc">
+            <datalist id="lista-proveedores-oc"></datalist>
+          </div>
+          <div class="campo" style="max-width:180px;">
+            <label>Fecha</label>
+            <input type="date" id="oc-fecha">
+          </div>
+          <div class="campo" style="max-width:180px;">
+            <label>N° Cotización</label>
+            <input type="text" id="oc-num-cot" placeholder="COT-2026-001">
+          </div>
+        </div>
+
+        <div id="estado-oc" class="estado">
+          <div class="spinner" id="spinner-oc-ext"></div>
+          <span id="msg-estado-oc"></span>
+        </div>
+
+        <div>
+          <button class="btn btn-primary" id="btn-extraer-oc" disabled>
+            <div class="spinner" id="spinner-btn-oc"></div>
+            <span>Extraer ítems con IA</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabla de revisión OC -->
+    <div id="seccion-revision-oc" style="display:none;">
+      <div class="card">
+        <div class="card-head">
+          <div class="step-num">2</div><h2>Revisar ítems y generar OC</h2>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="agregarFilaOC()">+ Fila</button>
+            <button class="btn btn-ghost btn-sm" onclick="reiniciarOC()">✕ Cancelar</button>
+          </div>
+        </div>
+        <div class="card-body" style="display:grid;gap:16px;">
+          <div class="resumen-grid" id="resumen-grid-oc"></div>
+          <div class="tabla-wrap">
+            <table>
+              <thead><tr>
+                <th style="width:32px;"></th>
+                <th>Insumo</th><th style="width:70px;">Cant.</th><th style="width:60px;">Unidad</th>
+                <th style="width:130px;">Precio unitario</th><th>Proveedor</th><th style="width:90px;">NIT</th>
+              </tr></thead>
+              <tbody id="tabla-cuerpo-oc"></tbody>
+            </table>
+          </div>
+          <div id="seccion-oc-exito" style="display:none;">
+            <strong>✓ OC generada exitosamente.</strong>
+            <span id="oc-exito-detalle"></span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-warn" id="btn-generar-oc" onclick="generarOCdesdeCot()">
+              <div class="spinner" id="spinner-generar-oc"></div>
+              <span>Generar Orden de Compra</span>
+            </button>
+            <span style="font-size:12px;color:var(--txt-2);" id="lbl-sel-oc"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /tab-oc -->
+
+</main>
+
+<script>
+// ── Estado global ─────────────────────────────────────────────────────────────
+let archivoSeleccionado   = null;
+let itemsExtraidos        = [];
+let archivoOC             = null;
+let itemsOC               = [];
+let proveedoresDB         = [];
+let insumosBD             = [];
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function cambiarTab(tab) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='precios')||(i===1&&tab==='oc')));
+  document.getElementById('tab-precios').classList.toggle('active', tab==='precios');
+  document.getElementById('tab-oc').classList.toggle('active', tab==='oc');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  document.getElementById('fecha-vigencia').value = new Date().toISOString().slice(0,10);
+  document.getElementById('oc-fecha').value       = new Date().toISOString().slice(0,10);
+
+  try {
+    proveedoresDB = await fetch('/proveedores').then(r=>r.json());
+    const dl  = document.getElementById('lista-proveedores');
+    const dl2 = document.getElementById('lista-proveedores-oc');
+    proveedoresDB.forEach(p => {
+      const v = `${p.nombre} (NIT: ${p.nit})`;
+      dl.innerHTML  += `<option value="${esc(v)}">`;
+      dl2.innerHTML += `<option value="${esc(v)}">`;
+    });
+  } catch {}
+
+  try { insumosBD = await fetch('/insumos').then(r=>r.json()); } catch {}
+
+  try {
+    const proyectos = await fetch('/proyectos').then(r=>r.json());
+    const s1 = document.getElementById('proy-manual');
+    const s2 = document.getElementById('oc-proyecto');
+    proyectos.forEach(p => {
+      s1.innerHTML += `<option value="${esc(p)}">${esc(p)}</option>`;
+      s2.innerHTML += `<option value="${esc(p)}">${esc(p)}</option>`;
+    });
+  } catch {}
+})();
+
+// ── Drop zones ────────────────────────────────────────────────────────────────
+function initDrop(zonaId, inputId, nombreId, archivo) {
+  const zona  = document.getElementById(zonaId);
+  const input = document.getElementById(inputId);
+  zona.addEventListener('dragover', e => { e.preventDefault(); zona.querySelector('div').style.borderColor='var(--accent)'; zona.querySelector('div').style.background='var(--accent-lo)'; });
+  zona.addEventListener('dragleave', () => { zona.querySelector('div').style.borderColor=''; zona.querySelector('div').style.background=''; });
+  zona.addEventListener('drop', e => {
+    e.preventDefault();
+    zona.querySelector('div').style.borderColor='';
+    zona.querySelector('div').style.background='';
+    if (e.dataTransfer.files[0]) seleccionarArchivo(e.dataTransfer.files[0], nombreId, archivo);
+  });
+  input.addEventListener('change', () => { if (input.files[0]) seleccionarArchivo(input.files[0], nombreId, archivo); });
+}
+initDrop('zona-drop',    'input-archivo',    'nombre-archivo',    'precios');
+initDrop('zona-drop-oc', 'input-archivo-oc', 'nombre-archivo-oc', 'oc');
+
+function seleccionarArchivo(file, nombreId, tipo) {
+  document.getElementById(nombreId).textContent = `📎 ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+  if (tipo === 'precios') {
+    archivoSeleccionado = file;
+    document.getElementById('btn-extraer').disabled = false;
+    setEstado('','');
+  } else {
+    archivoOC = file;
+    document.getElementById('btn-extraer-oc').disabled = false;
+    setEstadoOC('','');
+  }
+}
+
+// ── Estado visual ─────────────────────────────────────────────────────────────
+function setEstado(tipo, msg) {
+  const el = document.getElementById('estado-extraccion');
+  const txt = document.getElementById('msg-estado');
+  const spin = document.getElementById('spinner-ext');
+  el.className = 'estado' + (tipo ? ' visible ' + tipo : '');
+  txt.textContent = msg;
+  spin.style.display = tipo==='cargando' ? 'block' : 'none';
+}
+function setEstadoOC(tipo, msg) {
+  const el = document.getElementById('estado-oc');
+  const txt = document.getElementById('msg-estado-oc');
+  const spin = document.getElementById('spinner-oc-ext');
+  el.className = 'estado' + (tipo ? ' visible ' + tipo : '');
+  txt.textContent = msg;
+  spin.style.display = tipo==='cargando' ? 'block' : 'none';
+}
+
+// ── Extracción TAB PRECIOS ────────────────────────────────────────────────────
+document.getElementById('btn-extraer').addEventListener('click', async () => {
+  if (!archivoSeleccionado) return;
+  const btn = document.getElementById('btn-extraer');
+  const spin = document.getElementById('spinner-btn');
+  btn.disabled = true; spin.style.display = 'block';
+  setEstado('cargando', 'Procesando con IA — puede tardar 10-30 segundos...');
+  try {
+    const fd = new FormData();
+    fd.append('archivo', archivoSeleccionado);
+    const resp = await fetch('/extraer', { method:'POST', body:fd });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error);
+    if (!data.items?.length) throw new Error('No se encontraron ítems en el documento');
+    const provManual  = document.getElementById('prov-manual').value;
+    const proyManual  = document.getElementById('proy-manual').value;
+    const fechaManual = document.getElementById('fecha-vigencia').value;
+    const numCot      = document.getElementById('num-cot').value;
+    itemsExtraidos = data.items.map((it,i) => ({
+      ...it, id:i, excluir:false,
+      proveedor: it.proveedor||provManual||'',
+      nit: it.nit||'',
+      proyecto: it.proyecto||proyManual||'',
+      fechaVigencia: it.fechaVigencia||fechaManual.split('-').reverse().join('/'),
+      numCotizacion: numCot||it.numCotizacion||'COT-MANUAL',
+    }));
+    setEstado('ok', `✓ ${itemsExtraidos.length} ítem(s) extraídos de "${data.archivo}". Revisa antes de guardar.`);
+    renderTabla();
+    document.getElementById('seccion-revision').style.display = 'block';
+    document.getElementById('seccion-revision').scrollIntoView({ behavior:'smooth' });
+  } catch(err) {
+    setEstado('error', `Error: ${err.message}`);
+  } finally {
+    btn.disabled = false; spin.style.display = 'none';
+  }
+});
+
+// ── Extracción TAB OC ─────────────────────────────────────────────────────────
+document.getElementById('btn-extraer-oc').addEventListener('click', async () => {
+  if (!archivoOC) return;
+  const proyecto = document.getElementById('oc-proyecto').value;
+  if (!proyecto) { setEstadoOC('error','Selecciona un proyecto antes de continuar.'); return; }
+  const btn = document.getElementById('btn-extraer-oc');
+  const spin = document.getElementById('spinner-btn-oc');
+  btn.disabled = true; spin.style.display = 'block';
+  setEstadoOC('cargando', 'Extrayendo ítems y precios con IA...');
+  try {
+    const fd = new FormData();
+    fd.append('archivo', archivoOC);
+    const resp = await fetch('/extraer', { method:'POST', body:fd });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error);
+    if (!data.items?.length) throw new Error('No se encontraron ítems en el documento');
+    const provManual = document.getElementById('oc-proveedor').value.trim();
+    const mNit = provManual.match(/\(NIT:\s*([^)]+)\)/i);
+    const nitManual    = mNit ? mNit[1].trim() : '';
+    const nombreManual = mNit ? provManual.replace(/\s*\(NIT:[^)]+\)/i, '').trim() : provManual;
+    itemsOC = data.items.map((it,i) => ({
+      ...it, id:i, excluir:false,
+      proveedor: it.proveedor || nombreManual || '',
+      nit:       it.nit       || nitManual    || '',
+    }));
+    setEstadoOC('ok', `✓ ${itemsOC.length} ítem(s) extraídos. Revisa y genera la OC.`);
+    renderTablaOC();
+    document.getElementById('seccion-revision-oc').style.display = 'block';
+    document.getElementById('seccion-revision-oc').scrollIntoView({ behavior:'smooth' });
+  } catch(err) {
+    setEstadoOC('error', `Error: ${err.message}`);
+  } finally {
+    btn.disabled = false; spin.style.display = 'none';
+  }
+});
+
+// ── Tabla precios ─────────────────────────────────────────────────────────────
+function esInsumoNuevo(n) {
+  const norm = s => s.toUpperCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return !insumosBD.some(i => norm(i)===norm(n));
+}
+
+function renderTabla() {
+  const tbody = document.getElementById('tabla-cuerpo');
+  tbody.innerHTML = '';
+  itemsExtraidos.forEach((item,idx) => {
+    const nuevo = esInsumoNuevo(item.insumo||'');
+    const tr = document.createElement('tr');
+    if (item.excluir) tr.classList.add('excluida');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="check-excluir" ${item.excluir?'checked':''} onchange="toggleExcluir(${idx},this.checked)"></td>
+      <td><input class="td-input" value="${esc(item.insumo)}" oninput="actualizar(${idx},'insumo',this.value)" style="width:260px;" list="lista-insumos-p">
+        <datalist id="lista-insumos-p">${insumosBD.slice(0,50).map(i=>`<option value="${esc(i)}">`).join('')}</datalist></td>
+      <td><input class="td-input" value="${esc(item.cantidad||1)}" type="number" min="0.01" step="any" oninput="actualizar(${idx},'cantidad',this.value)" style="width:65px;"></td>
+      <td><input class="td-input" value="${esc(item.unidad||'UND')}" oninput="actualizar(${idx},'unidad',this.value)" style="width:55px;"></td>
+      <td><input class="td-input precio-nuevo" value="${esc(item.precio||'')}" type="number" min="0" step="any" oninput="actualizar(${idx},'precio',this.value)" placeholder="0.00" style="width:115px;"></td>
+      <td><input class="td-input" value="${esc(item.proveedor||'')}" oninput="actualizar(${idx},'proveedor',this.value)" style="width:180px;"></td>
+      <td><input class="td-input" value="${esc(item.nit||'')}" oninput="actualizar(${idx},'nit',this.value)" style="width:90px;"></td>
+      <td><input class="td-input" value="${esc(item.fechaVigencia||'')}" oninput="actualizar(${idx},'fechaVigencia',this.value)" placeholder="DD/MM/YYYY" style="width:100px;"></td>
+      <td><input class="td-input" value="${esc(item.proyecto||'')}" oninput="actualizar(${idx},'proyecto',this.value)" style="width:150px;"></td>
+      <td>${nuevo?'<span class="tag-nuevo">nuevo</span>':'<span class="tag-existe">existente</span>'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  actualizarResumen();
+}
+
+function esc(s) { return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function actualizar(idx,campo,valor){itemsExtraidos[idx][campo]=valor;actualizarResumen();}
+function toggleExcluir(idx,excluir){itemsExtraidos[idx].excluir=excluir;document.querySelectorAll('#tabla-cuerpo tr')[idx].classList.toggle('excluida',excluir);actualizarResumen();}
+function agregarFila(){
+  const fecha=document.getElementById('fecha-vigencia').value;
+  itemsExtraidos.push({id:itemsExtraidos.length,excluir:false,insumo:'',cantidad:1,unidad:'UND',precio:'',
+    proveedor:document.getElementById('prov-manual').value||'',nit:'',
+    proyecto:document.getElementById('proy-manual').value||'',
+    fechaVigencia:fecha?fecha.split('-').reverse().join('/'):'',
+    numCotizacion:document.getElementById('num-cot').value||'COT-MANUAL'});
+  renderTabla();
+  document.querySelector('#tabla-cuerpo tr:last-child .td-input').focus();
+}
+function actualizarResumen(){
+  const activas=itemsExtraidos.filter(i=>!i.excluir);
+  const nuevos=activas.filter(i=>esInsumoNuevo(i.insumo||''));
+  const conPrecio=activas.filter(i=>i.precio&&parseFloat(i.precio)>0);
+  document.getElementById('resumen-grid').innerHTML=`
+    <div class="resumen-item"><div class="num">${itemsExtraidos.length}</div><div class="lbl">Total ítems</div></div>
+    <div class="resumen-item"><div class="num">${activas.length}</div><div class="lbl">A guardar</div></div>
+    <div class="resumen-item"><div class="num" style="color:var(--accent-hi)">${nuevos.length}</div><div class="lbl">Insumos nuevos</div></div>
+    <div class="resumen-item"><div class="num" style="color:${conPrecio.length<activas.length?'var(--warn)':'var(--success)'}">${conPrecio.length}</div><div class="lbl">Con precio</div></div>`;
+  document.getElementById('lbl-seleccionadas').textContent=`${activas.length} de ${itemsExtraidos.length} serán guardados`;
+}
+
+// ── Tabla OC ─────────────────────────────────────────────────────────────────
+function renderTablaOC() {
+  const tbody = document.getElementById('tabla-cuerpo-oc');
+  tbody.innerHTML = '';
+  itemsOC.forEach((item,idx) => {
+    const tr = document.createElement('tr');
+    if (item.excluir) tr.classList.add('excluida');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="check-excluir" ${item.excluir?'checked':''} onchange="toggleExcluirOC(${idx},this.checked)"></td>
+      <td><input class="td-input" value="${esc(item.insumo)}" oninput="actualizarOC(${idx},'insumo',this.value)" style="width:280px;"></td>
+      <td><input class="td-input" value="${esc(item.cantidad||1)}" type="number" min="0.01" step="any" oninput="actualizarOC(${idx},'cantidad',this.value)" style="width:65px;"></td>
+      <td><input class="td-input" value="${esc(item.unidad||'UND')}" oninput="actualizarOC(${idx},'unidad',this.value)" style="width:55px;"></td>
+      <td><input class="td-input precio-nuevo" value="${esc(item.precio||'')}" type="number" min="0" step="any" oninput="actualizarOC(${idx},'precio',this.value)" placeholder="0.00" style="width:120px;"></td>
+      <td><input class="td-input" value="${esc(item.proveedor||'')}" oninput="actualizarOC(${idx},'proveedor',this.value)" style="width:200px;"></td>
+      <td><input class="td-input" value="${esc(item.nit||'')}" oninput="actualizarOC(${idx},'nit',this.value)" style="width:90px;"></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  actualizarResumenOC();
+}
+
+function actualizarOC(idx,campo,valor){itemsOC[idx][campo]=valor;actualizarResumenOC();}
+function toggleExcluirOC(idx,excluir){itemsOC[idx].excluir=excluir;document.querySelectorAll('#tabla-cuerpo-oc tr')[idx].classList.toggle('excluida',excluir);actualizarResumenOC();}
+function agregarFilaOC(){
+  itemsOC.push({id:itemsOC.length,excluir:false,insumo:'',cantidad:1,unidad:'UND',precio:'',
+    proveedor:document.getElementById('oc-proveedor').value||'',nit:''});
+  renderTablaOC();
+  document.querySelector('#tabla-cuerpo-oc tr:last-child .td-input').focus();
+}
+function actualizarResumenOC(){
+  const activas=itemsOC.filter(i=>!i.excluir);
+  const conPrecio=activas.filter(i=>i.precio&&parseFloat(i.precio)>0);
+  document.getElementById('resumen-grid-oc').innerHTML=`
+    <div class="resumen-item"><div class="num">${itemsOC.length}</div><div class="lbl">Total ítems</div></div>
+    <div class="resumen-item"><div class="num">${activas.length}</div><div class="lbl">A incluir en OC</div></div>
+    <div class="resumen-item"><div class="num" style="color:${conPrecio.length<activas.length?'var(--warn)':'var(--success)'}">${conPrecio.length}</div><div class="lbl">Con precio</div></div>`;
+  document.getElementById('lbl-sel-oc').textContent=`${activas.length} ítems se incluirán en la OC`;
+}
+
+// ── Generar OC desde cotización ───────────────────────────────────────────────
+async function generarOCdesdeCot() {
+  const filas = itemsOC.filter(i => !i.excluir && i.insumo);
+  if (!filas.length) { alert('No hay ítems para incluir en la OC.'); return; }
+
+  const proyecto = document.getElementById('oc-proyecto').value;
+  if (!proyecto) { alert('Selecciona un proyecto.'); return; }
+
+  const sinPrecio = filas.filter(i => !i.precio || parseFloat(i.precio) <= 0);
+  if (sinPrecio.length > 0) {
+    const ok = confirm(`${sinPrecio.length} ítem(s) no tienen precio. Quedarán marcados como PENDIENTE. ¿Continuar?`);
+    if (!ok) return;
+  }
+
+  const btn  = document.getElementById('btn-generar-oc');
+  const spin = document.getElementById('spinner-generar-oc');
+  btn.disabled = true; spin.style.display = 'block';
+
+  try {
+    const fecha    = document.getElementById('oc-fecha').value.split('-').reverse().join('/');
+    const numCot   = document.getElementById('oc-num-cot').value || 'COT-MANUAL';
+    const proveedor = filas[0]?.proveedor || '';
+    const nit       = filas[0]?.nit || '';
+
+    const resp = await fetch('/generar-oc-cotizacion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proyecto, fecha, numCotizacion: numCot, proveedor, nit, items: filas }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error);
+
+    document.getElementById('seccion-oc-exito').style.display = 'block';
+    document.getElementById('oc-exito-detalle').textContent =
+      ` Se generaron ${data.archivos.length} OC(s) → ${data.archivos.map(a=>a.archivo).join(', ')}`;
+    document.getElementById('seccion-oc-exito').scrollIntoView({ behavior:'smooth' });
+
+  } catch(err) {
+    alert('Error al generar OC: ' + err.message);
+  } finally {
+    btn.disabled = false; spin.style.display = 'none';
+  }
+}
+
+// ── Confirmar precios ─────────────────────────────────────────────────────────
+async function confirmar() {
+  const filas = itemsExtraidos.filter(i => !i.excluir && i.insumo);
+  if (!filas.length) { alert('No hay ítems para guardar.'); return; }
+  const sinPrecio = filas.filter(i => !i.precio || parseFloat(i.precio) <= 0);
+  if (sinPrecio.length) {
+    if (!confirm(`${sinPrecio.length} ítem(s) sin precio. ¿Guardar igualmente?`)) return;
+  }
+  const btn = document.getElementById('btn-confirmar');
+  const spin = document.getElementById('spinner-conf');
+  btn.disabled = true; spin.style.display = 'block';
+  try {
+    const resp = await fetch('/confirmar', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({filas}) });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error);
+    document.getElementById('seccion-carga').style.display    = 'none';
+    document.getElementById('seccion-revision').style.display = 'none';
+    document.getElementById('seccion-exito').style.display    = 'block';
+    document.getElementById('exito-txt').textContent = `${data.guardadas} precio(s) actualizados`;
+    document.getElementById('exito-sub').textContent = 'compras.csv actualizado. El sistema usará estos precios en la próxima OC.';
+    document.getElementById('seccion-exito').scrollIntoView({ behavior:'smooth' });
+  } catch(err) {
+    alert('Error: ' + err.message);
+    btn.disabled = false; spin.style.display = 'none';
+  }
+}
+
+// ── Reiniciar ─────────────────────────────────────────────────────────────────
+function reiniciar() {
+  archivoSeleccionado = null; itemsExtraidos = [];
+  document.getElementById('nombre-archivo').textContent = '';
+  document.getElementById('input-archivo').value = '';
+  document.getElementById('btn-extraer').disabled = true;
+  document.getElementById('prov-manual').value = '';
+  document.getElementById('proy-manual').value = '';
+  document.getElementById('num-cot').value = '';
+  document.getElementById('fecha-vigencia').value = new Date().toISOString().slice(0,10);
+  setEstado('','');
+  document.getElementById('seccion-carga').style.display    = 'block';
+  document.getElementById('seccion-revision').style.display = 'none';
+  document.getElementById('seccion-exito').style.display    = 'none';
+}
+function reiniciarOC() {
+  archivoOC = null; itemsOC = [];
+  document.getElementById('nombre-archivo-oc').textContent = '';
+  document.getElementById('input-archivo-oc').value = '';
+  document.getElementById('btn-extraer-oc').disabled = true;
+  document.getElementById('oc-proveedor').value = '';
+  document.getElementById('oc-num-cot').value = '';
+  document.getElementById('oc-fecha').value = new Date().toISOString().slice(0,10);
+  setEstadoOC('','');
+  document.getElementById('seccion-revision-oc').style.display = 'none';
+  document.getElementById('seccion-oc-exito').style.display    = 'none';
+}
+</script>
+</body>
+</html>
