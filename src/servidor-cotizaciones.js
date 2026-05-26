@@ -215,6 +215,8 @@ async function cascadaAnulacionRemisiones(ctx, ocIdAnulada, ocFields, usuario, n
         estado: 'anulada',
         motivoAnulacion: `OC ${numOCAnulada} anulada por ${usuario} el ${fechaStr}`,
       });
+      localDb.upsertDocumento('remisiones', { id: rem.id, fields: { ...f, estado: 'anulada',
+        motivoAnulacion: `OC ${numOCAnulada} anulada por ${usuario} el ${fechaStr}` } });
       afectadas.push({ id: rem.id, numero: f.numero, accion: 'anulada' });
     } else {
       // Remisión multi-OC → mantiene estado pero queda marcada con alerta
@@ -232,6 +234,8 @@ async function cascadaAnulacionRemisiones(ctx, ocIdAnulada, ocFields, usuario, n
         estado: 'requiere-reemplazo',
         alertas: alertasPrev ? `${alertasPrev}\n${alerta}` : alerta,
       });
+      localDb.upsertDocumento('remisiones', { id: rem.id, fields: { ...f, estado: 'requiere-reemplazo',
+        alertas: alertasPrev ? `${alertasPrev}\n${alerta}` : alerta } });
       afectadas.push({ id: rem.id, numero: f.numero, accion: 'requiere-reemplazo', ocRestantes: numerosRestantes });
     }
   }
@@ -286,17 +290,21 @@ async function reconciliarRemisionesVsOCs(ctx) {
 
     if (!vigentes.length) {
       const motivo = `OCs anuladas: ${anuladas.map(o => o.numero).join(', ')}`;
+      const motivoFinal = f.motivoAnulacion ? f.motivoAnulacion : motivo;
       await g.updateListItem(ctx.siteId, ctx.Remisiones, rem.id, {
         estado: 'anulada',
-        motivoAnulacion: f.motivoAnulacion ? f.motivoAnulacion : motivo,
+        motivoAnulacion: motivoFinal,
       });
+      localDb.upsertDocumento('remisiones', { id: rem.id, fields: { ...f, estado: 'anulada', motivoAnulacion: motivoFinal } });
       cambios++;
     } else if (f.estado !== 'requiere-reemplazo') {
       const alerta = `⚠ OCs anuladas: ${anuladas.map(o => o.numero).join(', ')}. Generar nueva remisión para OCs vigentes: ${vigentes.map(o => o.numero).join(', ')}`;
+      const alertasFinal = f.alertas ? `${f.alertas}\n${alerta}` : alerta;
       await g.updateListItem(ctx.siteId, ctx.Remisiones, rem.id, {
         estado: 'requiere-reemplazo',
-        alertas: f.alertas ? `${f.alertas}\n${alerta}` : alerta,
+        alertas: alertasFinal,
       });
+      localDb.upsertDocumento('remisiones', { id: rem.id, fields: { ...f, estado: 'requiere-reemplazo', alertas: alertasFinal } });
       cambios++;
     }
   }
@@ -1720,6 +1728,7 @@ const servidor = http.createServer(async (req, res) => {
           estado:               'activa',
         });
 
+        if (creado?.id) localDb.upsertDocumento('remisiones', creado);
         return json({ ok: true, id: creado.id, numero });
       } catch (err) {
         return json({ error: err.message }, 400);
@@ -1728,18 +1737,14 @@ const servidor = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── GET /remisiones → lista remisiones ──────────────────────────────────
+  // ── GET /remisiones → lista remisiones (desde SQLite, reconciliación en background)
   if (req.method === 'GET' && url === '/remisiones') {
-    try {
-      const ctx = await ctxSharePoint();
-      if (!ctx.Remisiones) return json([]);
-      try { await reconciliarRemisionesVsOCs(ctx); } catch (e) { console.warn('Reconciliación falló:', e.message); }
-      const items = await g.getListItems(ctx.siteId, ctx.Remisiones);
-      return json(items.map(it => ({ id: it.id, ...(it.fields || {}) })));
-    } catch (err) {
-      console.error('GET /remisiones:', err.message);
-      return json([], 200);
-    }
+    json(localDb.getRemisiones());
+    ctxSharePoint().then(ctx => {
+      if (ctx.Remisiones)
+        reconciliarRemisionesVsOCs(ctx).catch(e => console.warn('[reconciliar remisiones]', e.message));
+    }).catch(() => {});
+    return;
   }
 
   // ── GET /remisiones/:id/view.(html|pdf|xlsx) ────────────────────────────
@@ -1901,7 +1906,9 @@ const servidor = http.createServer(async (req, res) => {
       const items = await g.getListItems(ctx.siteId, ctx.OrdenesCompra);
       let rows = items.map(it => ({ id: it.id, ...(it.fields || {}) }));
 
-      if (filtroEstado)   rows = rows.filter(o => (o.estado || '').toLowerCase() === filtroEstado);
+      if (filtroEstado === 'pagada')         rows = rows.filter(o => o.pagado);
+      else if (filtroEstado === 'entregada') rows = rows.filter(o => o.entregado);
+      else if (filtroEstado)                 rows = rows.filter(o => (o.estado || '').toLowerCase() === filtroEstado);
       if (filtroProyecto) rows = rows.filter(o => (o.proyecto || '') === filtroProyecto);
       if (filtroTexto)    rows = rows.filter(o =>
         (o.numeroOC || '').toLowerCase().includes(filtroTexto) ||

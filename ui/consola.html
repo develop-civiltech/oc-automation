@@ -3084,7 +3084,9 @@ function renderOrdenes(){
   const proy    = $('#filtro-oc-proyecto').value;
 
   let filtradas = ESTADO.ordenes;
-  if (estado) filtradas = filtradas.filter(o => o.estado === estado);
+  if (estado === 'pagada')    filtradas = filtradas.filter(o => o.pagado);
+  else if (estado === 'entregada') filtradas = filtradas.filter(o => o.entregado);
+  else if (estado)            filtradas = filtradas.filter(o => o.estado === estado);
   if (proy)   filtradas = filtradas.filter(o => o.proyecto === proy);
   if (q)      filtradas = filtradas.filter(o =>
     (o.numeroOC || '').toLowerCase().includes(q) ||
