@@ -256,6 +256,7 @@ async function reconciliarRequerimientosVsOCs(ctx) {
       const nuevo = await calcularEstadoRequerimiento(ctx, r);
       if (nuevo && nuevo !== f.estado) {
         await g.updateListItem(ctx.siteId, ctx.Requerimientos, r.id, { estado: nuevo });
+        localDb.upsertDocumento('requerimientos', { id: r.id, fields: { ...f, estado: nuevo } });
         cambios++;
       }
     } catch (e) { console.warn(`Reconcilia req ${r.id}:`, e.message); }
@@ -964,9 +965,82 @@ const servidor = http.createServer(async (req, res) => {
     });
   }
 
-  // ── GET /proveedores ────────────────────────────────────────────────────
+  // ── GET /proveedores → lista completa desde SQLite ──────────────────────
   if (req.method === 'GET' && url === '/proveedores') {
-    return json(await obtenerProveedores());
+    return json(localDb.getProveedores());
+  }
+
+  // ── GET /proveedores/historial → proveedores en OCs/OSs no registrados ──
+  if (req.method === 'GET' && url === '/proveedores/historial') {
+    return json(localDb.getProveedoresDesdeHistorial());
+  }
+
+  // ── GET /proveedores/:id ─────────────────────────────────────────────────
+  const mProvId = url.match(/^\/proveedores\/([^\/]+)$/);
+  if (req.method === 'GET' && mProvId) {
+    const p = localDb.getProveedores().find(x => String(x.id) === mProvId[1]);
+    return p ? json(p) : json({ error: 'Proveedor no encontrado' }, 404);
+  }
+
+  // ── POST /proveedores → inscribir proveedor nuevo ────────────────────────
+  if (req.method === 'POST' && url === '/proveedores') {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+        const normalize = s => String(s || '').trim().toUpperCase();
+        const nit    = String(body.nit || '').trim().replace(/[^0-9\-]/g, '');
+        const nombre = normalize(body.nombre);
+        if (!nit)    return json({ error: 'El NIT es obligatorio.' }, 400);
+        if (!nombre) return json({ error: 'La razón social es obligatoria.' }, 400);
+        const campos = {
+          nit,
+          razonSocial: nombre,   // nombre del campo en SharePoint
+          zona:        normalize(body.zona),
+          municipio:   normalize(body.municipio),
+          telefono:    String(body.telefono || '').trim(),
+          correo:      String(body.correo || '').trim().toLowerCase(),
+          activo:      true,
+        };
+        const ctx = await ctxSharePoint();
+        if (!ctx.Proveedores) return json({ error: 'Lista Proveedores no disponible en SharePoint.' }, 500);
+        const creado = await g.addListItem(ctx.siteId, ctx.Proveedores, campos);
+        if (creado?.id) localDb.upsertProveedor({ id: creado.id, fields: { nombre, ...campos, ...(creado.fields || {}) } });
+        return json({ ok: true, id: creado?.id });
+      } catch (err) { return json({ error: err.message }, 500); }
+    });
+    return;
+  }
+
+  // ── PATCH /proveedores/:id → editar proveedor ────────────────────────────
+  if (req.method === 'PATCH' && mProvId) {
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', async () => {
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+        const normalize = s => String(s || '').trim().toUpperCase();
+        const cambios = {};
+        if (body.nit      != null) cambios.nit         = String(body.nit).trim().replace(/[^0-9\-]/g, '');
+        if (body.nombre   != null) cambios.razonSocial  = normalize(body.nombre);
+        if (body.zona     != null) cambios.zona         = normalize(body.zona);
+        if (body.municipio!= null) cambios.municipio    = normalize(body.municipio);
+        if (body.telefono != null) cambios.telefono     = String(body.telefono).trim();
+        if (body.correo   != null) cambios.correo       = String(body.correo).trim().toLowerCase();
+        if (body.activo   != null) cambios.activo       = !!body.activo;
+        const ctx = await ctxSharePoint();
+        if (!ctx.Proveedores) return json({ error: 'Lista Proveedores no disponible.' }, 500);
+        await g.updateListItem(ctx.siteId, ctx.Proveedores, mProvId[1], cambios);
+        const actual = localDb.getProveedores().find(x => String(x.id) === mProvId[1]) || {};
+        // incluir nombre en SQLite para que getProveedores() lo resuelva correctamente
+        const cambosSQLite = { ...cambios };
+        if (cambios.razonSocial) cambosSQLite.nombre = cambios.razonSocial;
+        localDb.upsertProveedor({ id: mProvId[1], fields: { ...actual, ...cambosSQLite } });
+        return json({ ok: true });
+      } catch (err) { return json({ error: err.message }, 500); }
+    });
+    return;
   }
 
   // ── GET /insumos ────────────────────────────────────────────────────────
@@ -2257,6 +2331,10 @@ const servidor = http.createServer(async (req, res) => {
             const estadoPrev  = (reqItem.fields || {}).estado || 'pendiente';
             if (nuevoEstado !== estadoPrev) {
               await g.updateListItem(ctx.siteId, ctx.Requerimientos, reqId, { estado: nuevoEstado });
+              localDb.upsertDocumento('requerimientos', {
+                id: reqId,
+                fields: { ...(reqItem.fields || {}), estado: nuevoEstado },
+              });
               requerimientoRecalculado = { id: reqId, estadoPrev, estadoNuevo: nuevoEstado };
             }
           }

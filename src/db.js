@@ -54,7 +54,11 @@ function _crearEsquema(d) {
       updated_at TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_prov_nit ON proveedores(nit);
-
+  `);
+  // Migraciones no destructivas — columnas nuevas en tabla existente
+  try { db().exec(`ALTER TABLE proveedores ADD COLUMN data TEXT DEFAULT '{}'`); } catch {}
+  try { db().exec(`ALTER TABLE proveedores ADD COLUMN activo INTEGER DEFAULT 1`); } catch {}
+  db().exec(`
     -- ── Insumos ─────────────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS insumos (
       sp_id        TEXT PRIMARY KEY,
@@ -146,9 +150,11 @@ const UPSERT_HP = `
     cantidad=excluded.cantidad, unidad=excluded.unidad, updated_at=excluded.updated_at`;
 
 const UPSERT_PROV = `
-  INSERT INTO proveedores (sp_id,nit,nombre,zona,updated_at)
-  VALUES (@sp_id,@nit,@nombre,@zona,@updated_at)
-  ON CONFLICT(sp_id) DO UPDATE SET nit=excluded.nit,nombre=excluded.nombre,zona=excluded.zona,updated_at=excluded.updated_at`;
+  INSERT INTO proveedores (sp_id,nit,nombre,zona,data,activo,updated_at)
+  VALUES (@sp_id,@nit,@nombre,@zona,@data,@activo,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET
+    nit=excluded.nit, nombre=excluded.nombre, zona=excluded.zona,
+    data=excluded.data, activo=excluded.activo, updated_at=excluded.updated_at`;
 
 const UPSERT_INS = `
   INSERT INTO insumos (sp_id,nombre,nombreNorm,categoria,subcategoria,unidad,activo,updated_at)
@@ -228,16 +234,33 @@ function bulkUpsertProveedores(rows) {
   const stmt = db().prepare(UPSERT_PROV);
   const tx   = db().transaction((items) => {
     for (const f of items) {
+      const spId = String(f.id || f.sp_id || '');
       stmt.run({
-        sp_id:      String(f.id || f.sp_id || ''),
+        sp_id:      spId,
         nit:        String(f.nit || f.Identificacion || '').trim().replace(/\.0$/, ''),
         nombre:     String(f.razonSocial || f.nombre || f['Razon social'] || '').trim(),
         zona:       String(f.zona || '').trim(),
+        activo:     f.activo === false ? 0 : 1,
+        data:       JSON.stringify({ id: spId, ...f }),
         updated_at: String(f.updated_at || f.Modified || new Date().toISOString()),
       });
     }
   });
   tx(rows);
+}
+
+function upsertProveedor(item) {
+  const id     = String(item.id || '');
+  const f      = item.fields || item;
+  const nit    = String(f.nit || f.Identificacion || '').trim().replace(/\.0$/, '');
+  const nombre = String(f.nombre || f.razonSocial || f['Razon social'] || '').trim();
+  const zona   = String(f.zona || '').trim();
+  const activo = f.activo === false ? 0 : 1;
+  db().prepare(UPSERT_PROV).run({
+    sp_id: id, nit, nombre, zona, activo,
+    data:  JSON.stringify({ id, ...f }),
+    updated_at: String(f.Modified || f.updated_at || new Date().toISOString()),
+  });
 }
 
 function bulkUpsertInsumos(rows) {
@@ -316,8 +339,55 @@ function getHistorialPrecios() {
   return db().prepare('SELECT * FROM historial_precios ORDER BY fecha DESC').all();
 }
 
-function getProveedores() {
-  return db().prepare('SELECT * FROM proveedores ORDER BY nombre').all();
+function getProveedores({ soloActivos = false } = {}) {
+  const q = soloActivos
+    ? 'SELECT * FROM proveedores WHERE activo=1 ORDER BY nombre'
+    : 'SELECT * FROM proveedores ORDER BY nombre';
+  return db().prepare(q).all().map(r => {
+    try {
+      const d = JSON.parse(r.data || '{}');
+      return { ...d, id: r.sp_id, nit: r.nit, nombre: r.nombre, zona: r.zona, activo: r.activo !== 0 };
+    } catch {
+      return { id: r.sp_id, nit: r.nit, nombre: r.nombre, zona: r.zona, activo: r.activo !== 0 };
+    }
+  });
+}
+
+function getProveedoresDesdeHistorial() {
+  const parse = row => { try { return JSON.parse(row.data || '{}'); } catch { return {}; } };
+  const ocs = db().prepare('SELECT data FROM ordenes_compra').all().map(parse);
+  const oss = db().prepare('SELECT data FROM ordenes_servicio').all().map(parse);
+
+  const mapa = new Map();
+  for (const o of [...ocs, ...oss]) {
+    const nit    = String(o.proveedorNit  || o.nit    || '').trim();
+    const nombre = String(o.proveedorNombre || o.proveedor || '').trim();
+    if (!nit && !nombre) continue;
+    const key = (nit || nombre).toLowerCase();
+    if (!mapa.has(key)) mapa.set(key, { nit, nombre, count: 0 });
+    mapa.get(key).count++;
+  }
+
+  const normNit = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+
+  const registrados = new Set(
+    db().prepare('SELECT nit FROM proveedores').all()
+      .map(r => normNit(r.nit)).filter(Boolean)
+  );
+
+  const registradosNombres = new Set(
+    db().prepare('SELECT nombre FROM proveedores').all()
+      .map(r => String(r.nombre || '').toUpperCase().trim()).filter(Boolean)
+  );
+
+  return [...mapa.values()]
+    .filter(p => {
+      const n = normNit(p.nit);
+      if (n) return !registrados.has(n);
+      const nom = String(p.nombre || '').toUpperCase().trim();
+      return nom ? !registradosNombres.has(nom) : false;
+    })
+    .sort((a, b) => b.count - a.count);
 }
 
 function getInsumos({ soloActivos = true } = {}) {
@@ -505,6 +575,8 @@ module.exports = {
   getOcIdsConEntrada,
   getNextDocRef,
   getDocumentosInventario,
+  getProveedoresDesdeHistorial,
+  upsertProveedor,
   upsertDocumento,
   upsertHistorialFila,
   counts,

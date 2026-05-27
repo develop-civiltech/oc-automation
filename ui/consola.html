@@ -494,6 +494,7 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
               <label>NIT proveedor / contratista</label>
               <input type="text" id="os-proveedor-nit" placeholder="900.123.456-7" list="lista-proveedores-os" oninput="completarProveedorOS()">
               <datalist id="lista-proveedores-os"></datalist>
+              <div id="os-prov-aviso" style="display:none;margin-top:4px;font-size:11px;color:#c33;background:#fff5f5;border:1px solid #fca5a5;border-radius:4px;padding:6px 8px"></div>
             </div>
             <div class="campo">
               <label>Razón social / nombre</label>
@@ -1077,6 +1078,47 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
         </div>
       </details>
 
+      <details id="cfg-proveedores" style="border-top:1px solid var(--border);padding-top:18px">
+        <summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2);font-weight:600;list-style:none;display:flex;align-items:center;gap:6px">
+          <span>&#9654;</span> Inscribir proveedores
+        </summary>
+        <div style="margin-top:16px">
+          <div style="font-size:11px;color:var(--txt-3);margin-bottom:10px;line-height:1.5">Gestiona el catálogo de proveedores. Solo los proveedores inscritos aquí pueden usarse en OCs y OSs.</div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+            <input class="td-input" id="prov-nit" placeholder="NIT (solo dígitos y guiones)" style="border:1px solid var(--border);padding:7px 10px">
+            <input class="td-input" id="prov-nombre" placeholder="Razón social / Nombre *" style="border:1px solid var(--border);padding:7px 10px">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:6px">
+            <select id="prov-zona" class="td-input" style="border:1px solid var(--border);padding:7px 10px">
+              <option value="">— Zona —</option>
+              <option value="Centro">Centro</option><option value="Caribe">Caribe</option>
+              <option value="Occidente">Occidente</option><option value="Nororiente">Nororiente</option>
+              <option value="Sur">Sur</option><option value="Llanos">Llanos</option>
+              <option value="Internacional">Internacional</option>
+            </select>
+            <input class="td-input" id="prov-municipio" placeholder="Municipio" style="border:1px solid var(--border);padding:7px 10px">
+            <input class="td-input" id="prov-telefono" placeholder="Teléfono" style="border:1px solid var(--border);padding:7px 10px">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:6px">
+            <input class="td-input" id="prov-correo" type="email" placeholder="Correo electrónico" style="border:1px solid var(--border);padding:7px 10px">
+            <button id="btn-guardar-prov" class="btn btn-primary btn-sm" onclick="crearProveedor()">Agregar</button>
+          </div>
+          <div id="msg-prov" style="font-size:11px;margin-top:6px;min-height:16px"></div>
+
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <input class="td-input" id="prov-buscar" placeholder="Buscar por nombre, NIT o municipio…"
+              oninput="_filtrarProveedoresCfg()"
+              style="flex:1;border:1px solid var(--border);padding:6px 10px;font-size:12px">
+            <button class="btn btn-ghost btn-sm" onclick="mostrarHistorialNoRegistrados()" title="Ver proveedores en OCs/OSs que no están inscritos">
+              Detectar sin registrar
+            </button>
+          </div>
+          <div id="historial-prov-panel" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);padding:10px;font-size:12px"></div>
+          <div id="lista-proveedores-cfg" style="margin-top:8px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:4px"></div>
+        </div>
+      </details>
+
       <details id="cfg-actualizador" style="border-top:1px solid var(--border);padding-top:18px">
         <summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2);font-weight:600;list-style:none;display:flex;align-items:center;gap:6px">
           <span>&#9654;</span> Actualizador de precios
@@ -1245,7 +1287,25 @@ const ESTADO = {
 let _osItems = [];
 let _editReqId   = null;
 let _editReqItems = [];
-let _editandoProyectoId = null;
+let _editandoProyectoId  = null;
+let _editandoProveedorId  = null;
+let _todosProveedoresCfg  = [];
+const _PROV_DESCARTADOS_KEY = 'erp-prov-descartados';
+const _normNit = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+function _getDescartados() {
+  try { return new Set(JSON.parse(localStorage.getItem(_PROV_DESCARTADOS_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+function _descartarProveedor(nitNorm, nombre) {
+  const set = _getDescartados();
+  set.add(nitNorm || ('nom:' + String(nombre).toLowerCase().trim()));
+  localStorage.setItem(_PROV_DESCARTADOS_KEY, JSON.stringify([...set]));
+  mostrarHistorialNoRegistrados();
+}
+function _restaurarDescartados() {
+  localStorage.removeItem(_PROV_DESCARTADOS_KEY);
+  mostrarHistorialNoRegistrados();
+}
 let _osExtraccion = null;
 
 const REFRESH_MS = 60 * 60 * 1000;     // 1 hora
@@ -1710,9 +1770,23 @@ function toggleOfertaOS() {
 }
 
 function completarProveedorOS() {
-  const nit = ($('#os-proveedor-nit')?.value || '').trim().replace(/[\.\-]/g, '');
-  const prov = ESTADO.proveedoresDB.find(p => (p.nit || '').replace(/[\.\-]/g, '') === nit);
-  if (prov && $('#os-proveedor-nombre')) $('#os-proveedor-nombre').value = prov.razonSocial || prov.nombre || '';
+  const nitRaw = ($('#os-proveedor-nit')?.value || '').trim();
+  const nit    = nitRaw.replace(/[\.\-]/g, '');
+  const aviso  = $('#os-prov-aviso');
+  const prov   = (ESTADO.proveedoresDB || []).find(p => (p.nit || '').replace(/[\.\-]/g, '') === nit);
+  if (prov) {
+    if ($('#os-proveedor-nombre')) $('#os-proveedor-nombre').value = prov.razonSocial || prov.nombre || '';
+    if (aviso) aviso.style.display = 'none';
+  } else {
+    if ($('#os-proveedor-nombre')) $('#os-proveedor-nombre').value = '';
+    if (aviso && nit.length >= 5) {
+      const nitEsc   = esc(nitRaw);
+      aviso.innerHTML = `Proveedor no registrado. <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="abrirInscribirProveedor('${nitEsc}','')">Inscribir proveedor</button>`;
+      aviso.style.display = 'block';
+    } else if (aviso) {
+      aviso.style.display = 'none';
+    }
+  }
 }
 
 // ─── OS: Sub-tabs ────────────────────────────────────────────────────────────
@@ -2097,8 +2171,12 @@ async function cargarAutocompletes(){
   const proyOpts = '<option value="">— Detectar del documento —</option>' +
                    ESTADO.proyectos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
   if ($('#proy-manual')) $('#proy-manual').innerHTML = proyOpts;
-  if ($('#oc-proyecto')) $('#oc-proyecto').innerHTML = '<option value="">— Selecciona el proyecto —</option>' +
-    ESTADO.proyectos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+  if ($('#oc-proyecto')) {
+    const _ocProy = $('#oc-proyecto').value;
+    $('#oc-proyecto').innerHTML = '<option value="">— Selecciona el proyecto —</option>' +
+      ESTADO.proyectos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    if (_ocProy) $('#oc-proyecto').value = _ocProy;
+  }
 
   const fReqP = $('#filtro-req-proyecto');
   const fOcP  = $('#filtro-oc-proyecto');
@@ -2732,6 +2810,35 @@ function autocompletarNit(seleccionId) {
   }
 }
 
+function autocompletarNitOC(idx) {
+  const nomEl = $(`#oc-row-prov-${idx}`);
+  const nitEl  = $(`#oc-row-nit-${idx}`);
+  if (!nomEl || !nitEl) return;
+  const nombre = nomEl.value.trim().toLowerCase();
+  const prov = (ESTADO.proveedoresDB || []).find(p => (p.nombre || '').trim().toLowerCase() === nombre);
+  if (prov?.nit) {
+    nitEl.value = prov.nit;
+    actualizarOC(idx, 'nit', prov.nit);
+  } else {
+    nitEl.value = '';
+    actualizarOC(idx, 'nit', '');
+  }
+}
+
+function autocompletarNombreOC(idx) {
+  const nomEl = $(`#oc-row-prov-${idx}`);
+  const nitEl  = $(`#oc-row-nit-${idx}`);
+  if (!nomEl || !nitEl) return;
+  const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+  const nitN = _normN(nitEl.value);
+  if (!nitN) return;
+  const prov = (ESTADO.proveedoresDB || []).find(p => _normN(p.nit) === nitN);
+  if (prov?.nombre) {
+    nomEl.value = prov.nombre;
+    actualizarOC(idx, 'proveedor', prov.nombre);
+  }
+}
+
 function actualizarResumenSeleccion(){
   const sel = recolectarSelecciones();
   const cont = $('#oc-resumen-seleccion');
@@ -2792,6 +2899,35 @@ async function confirmarGenerarOC(){
     if (!porProv[key]) porProv[key] = { nombre: nombre || '(sin nombre)', items: 0 };
     porProv[key].items += 1;
   });
+  // Validar que todos los proveedores seleccionados estén inscritos
+  {
+    const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const provMap = new Map();
+    sel.forEach(s => {
+      const nit = (s.proveedorNit || '').trim();
+      const nom = (s.proveedorNombre || '').trim();
+      if (!nit && !nom) return;
+      const key = _normN(nit) || nom.toLowerCase();
+      if (!provMap.has(key)) provMap.set(key, { nit, nombre: nom });
+    });
+    if (provMap.size > 0) {
+      const dbProv = ESTADO.proveedoresDB || [];
+      const noReg = [...provMap.values()].filter(p => {
+        const nitN = _normN(p.nit);
+        return !dbProv.some(r =>
+          (nitN && _normN(r.nit) === nitN) ||
+          (p.nombre && (r.nombre || '').toLowerCase() === p.nombre.toLowerCase())
+        );
+      });
+      if (noReg.length) {
+        const lista = noReg.map(p => `• ${p.nombre || '(sin nombre)'}${p.nit ? ' · NIT ' + p.nit : ''}`).join('\n');
+        alert(`No se puede generar la OC.\n\nProveedor(es) no registrado(s):\n${lista}\n\nInscríbelos en Configuración ERP → Inscribir proveedores.`);
+        abrirInscribirProveedor(noReg[0].nit || '', noReg[0].nombre || '');
+        return;
+      }
+    }
+  }
+
   const resumen = Object.values(porProv).map(p => `  • ${p.nombre} — ${p.items} ítem(s)`).join('\n');
   if (!confirm(`Se generarán ${Object.keys(porProv).length} OC(s) en estado borrador:\n\n${resumen}\n\n¿Continuar?`)) return;
 
@@ -3086,6 +3222,7 @@ function renderOrdenes(){
   let filtradas = ESTADO.ordenes;
   if (estado === 'pagada')    filtradas = filtradas.filter(o => o.pagado);
   else if (estado === 'entregada') filtradas = filtradas.filter(o => o.entregado);
+  else if (estado === 'aprobada') filtradas = filtradas.filter(o => o.estado === 'aprobada' && !o.entregado);
   else if (estado)            filtradas = filtradas.filter(o => o.estado === estado);
   if (proy)   filtradas = filtradas.filter(o => o.proyecto === proy);
   if (q)      filtradas = filtradas.filter(o =>
@@ -3594,7 +3731,14 @@ async function accionOC(id, accion){
       }).join('\n');
       alert(`OC anulada.\n\nRemisiones afectadas:\n${resumen}`);
     }
-    await cargarOrdenes();
+    if (accion === 'anular' && data.requerimientoRecalculado) {
+      const { id: rqId, estadoNuevo } = data.requerimientoRecalculado;
+      if (ESTADO.requerimientos) {
+        const rq = ESTADO.requerimientos.find(r => String(r.id) === String(rqId));
+        if (rq) { rq.estado = estadoNuevo; renderRequerimientos(); }
+      }
+    }
+    await Promise.all([cargarOrdenes(), cargarRequerimientos()]);
   }catch(e){
     alert('Error: ' + e.message);
   }
@@ -3885,8 +4029,8 @@ function renderTablaOC(){
       <td><input class="td-input" value="${esc(item.unidad||'UND')}" oninput="actualizarOC(${idx},'unidad',this.value)" style="width:55px"></td>
       <td><input class="td-input precio-nuevo" value="${esc(item.precio||'')}" type="number" min="0" step="any" oninput="actualizarOC(${idx},'precio',this.value)" placeholder="0.00" style="width:120px"></td>
       <td><input class="td-input" value="${esc(ivaVal)}" type="number" min="0" max="100" step="0.01" oninput="actualizarOC(${idx},'ivaPct',this.value)" style="width:65px"></td>
-      <td><input class="td-input" value="${esc(item.proveedor||'')}" oninput="actualizarOC(${idx},'proveedor',this.value)" style="width:200px"></td>
-      <td><input class="td-input" value="${esc(item.nit||'')}" oninput="actualizarOC(${idx},'nit',this.value)" style="width:90px"></td>`;
+      <td><input class="td-input" id="oc-row-prov-${idx}" value="${esc(item.proveedor||'')}" oninput="actualizarOC(${idx},'proveedor',this.value);autocompletarNitOC(${idx})" style="width:200px" list="lista-proveedores-nombres"></td>
+      <td><input class="td-input mono" id="oc-row-nit-${idx}" value="${esc(item.nit||'')}" oninput="actualizarOC(${idx},'nit',this.value);autocompletarNombreOC(${idx})" style="width:90px"></td>`;
     tbody.appendChild(tr);
   });
   actualizarResumenOC();
@@ -3969,6 +4113,39 @@ async function generarOCdesdeCot(){
   if (!filas.length) return alert('No hay ítems para incluir en la OC.');
   const proyecto = $('#oc-proyecto').value;
   if (!proyecto) return alert('Selecciona un proyecto.');
+
+  // Validar que todos los proveedores (header + por fila) estén inscritos
+  {
+    const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const provMap = new Map();
+    const headerNom = ($('#oc-proveedor')?.value || '').trim();
+    if (headerNom) provMap.set(headerNom.toLowerCase(), { nit: '', nombre: headerNom });
+    filas.forEach(f => {
+      const nom = (f.proveedor || '').trim();
+      const nit = (f.nit      || '').trim();
+      if (!nom && !nit) return;
+      const key = _normN(nit) || nom.toLowerCase();
+      if (!provMap.has(key)) provMap.set(key, { nit, nombre: nom });
+    });
+    if (provMap.size > 0) {
+      const dbProv = ESTADO.proveedoresDB || [];
+      const noReg = [...provMap.values()].filter(p => {
+        const nitN = _normN(p.nit);
+        return !dbProv.some(r =>
+          (nitN && _normN(r.nit) === nitN) ||
+          (p.nombre && (r.nombre || '').toLowerCase() === p.nombre.toLowerCase())
+        );
+      });
+      if (noReg.length) {
+        const lista = noReg.map(p => `• ${p.nombre || '(sin nombre)'}${p.nit ? ' · NIT ' + p.nit : ''}`).join('\n');
+        alert(`No se puede generar la OC.\n\nProveedor(es) no registrado(s) en el catálogo:\n${lista}\n\nInscríbelo(s) en Configuración ERP → Inscribir proveedores y vuelve a intentarlo.`);
+        const primero = noReg[0];
+        abrirInscribirProveedor(primero.nit || '', primero.nombre || '');
+        return;
+      }
+    }
+  }
+
   const sinPrecio = filas.filter(i => !i.precio || parseFloat(i.precio) <= 0);
   if (sinPrecio.length && !confirm(`${sinPrecio.length} ítem(s) sin precio. Quedarán marcados como PENDIENTE. ¿Continuar?`)) return;
   const btn = $('#btn-generar-oc'); const spin = $('#spinner-generar-oc');
@@ -3985,9 +4162,10 @@ async function generarOCdesdeCot(){
     });
     const data = await resp.json();
     if (!resp.ok || data.error) throw new Error(data.error);
-    $('#seccion-oc-exito').style.display = 'block';
     let detalle = ` Se generaron ${data.archivos?.length || 0} OC(s) (borradores). Apruébalas desde la pestaña 1.3.`;
     if (data.estadoRequerimiento) detalle += ` Requerimiento vinculado → estado: ${data.estadoRequerimiento}.`;
+    reiniciarOC();
+    $('#seccion-oc-exito').style.display = 'block';
     $('#oc-exito-detalle').textContent = detalle;
     await cargarOrdenes();
     if (reqVincular) await cargarRequerimientos();
@@ -4012,6 +4190,7 @@ let _logoDataUrl = null;
 async function abrirConfig(){
   $('#modal-config').style.display = 'flex';
   cargarProyectosAdmin();
+  cargarProveedoresAdmin();
   try{
     const cfg = await fetch('/config').then(r => r.json());
     _logoDataUrl = cfg.logo || null;
@@ -4183,6 +4362,206 @@ async function toggleProyecto(id, activar){
     cargarAutocompletes();
   }catch(e){ alert('Error: ' + e.message); }
 }
+
+// ── Gestión de proveedores (alta + activar/inactivar) ────────────────────────
+async function cargarProveedoresAdmin(){
+  const cont = $('#lista-proveedores-cfg');
+  if (!cont) return;
+  cont.innerHTML = '<div style="padding:10px;color:var(--txt-3);font-size:11px">Cargando…</div>';
+  try{
+    const lst = await fetch('/proveedores').then(r => r.json());
+    if (!Array.isArray(lst) || !lst.length){
+      _todosProveedoresCfg = [];
+      cont.innerHTML = '<div style="padding:10px;color:var(--txt-3);font-size:11px">Sin proveedores inscritos. Usa el formulario de arriba para agregar el primero.</div>';
+      return;
+    }
+    lst.sort((a, b) => {
+      if (!!a.activo !== !!b.activo) return (b.activo ? 1 : 0) - (a.activo ? 1 : 0);
+      return String(a.nombre || '').localeCompare(String(b.nombre || ''));
+    });
+    _todosProveedoresCfg = lst;
+    _filtrarProveedoresCfg();
+  }catch(e){
+    cont.innerHTML = `<div style="padding:10px;color:#c33;font-size:11px">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function _filtrarProveedoresCfg() {
+  const q    = ($('#prov-buscar')?.value || '').trim().toLowerCase();
+  const cont = $('#lista-proveedores-cfg');
+  if (!cont) return;
+  const visible = q
+    ? _todosProveedoresCfg.filter(p =>
+        (p.nombre   || '').toLowerCase().includes(q) ||
+        (p.nit      || '').includes(q) ||
+        (p.municipio|| '').toLowerCase().includes(q))
+    : _todosProveedoresCfg;
+  if (!visible.length) {
+    cont.innerHTML = `<div style="padding:10px;color:var(--txt-3);font-size:11px">${q ? 'Sin resultados para &ldquo;' + esc(q) + '&rdquo;.' : 'Sin proveedores inscritos.'}</div>`;
+    return;
+  }
+  cont.innerHTML = visible.map(p => {
+    const activo = p.activo !== false;
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:500;color:${activo ? 'var(--txt)' : 'var(--txt-3)'}">${esc(p.nombre || '')}${p.municipio ? ' · ' + esc(p.municipio) : ''}</div>
+          <div style="font-size:11px;color:var(--txt-3)">NIT: ${esc(p.nit || '—')}${p.zona ? ' · ' + esc(p.zona) : ''}${p.correo ? ' · ' + esc(p.correo) : ''}</div>
+        </div>
+        <span class="tag ${activo ? 'tag-aprobada' : 'tag-anulada'}" style="font-size:10px">${activo ? 'Activo' : 'Inactivo'}</span>
+        <button class="btn btn-ghost btn-sm" onclick="editarProveedor('${esc(String(p.id))}')">Editar</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleProveedor('${esc(String(p.id))}', ${activo})">${activo ? 'Inactivar' : 'Activar'}</button>
+      </div>`;
+  }).join('');
+}
+
+async function mostrarHistorialNoRegistrados() {
+  const panel = $('#historial-prov-panel');
+  if (!panel) return;
+  panel.style.display = 'block';
+  panel.innerHTML = '<span style="color:var(--txt-3)">Analizando historial…</span>';
+  try {
+    let lista = await fetch('/proveedores/historial').then(r => r.json());
+    if (!Array.isArray(lista)) lista = [];
+
+    const descartados  = _getDescartados();
+    const activos      = lista.filter(p => {
+      const key = _normNit(p.nit) || ('nom:' + String(p.nombre || '').toLowerCase().trim());
+      return !descartados.has(key);
+    });
+    const nDescartados = lista.length - activos.length;
+    const btnRestaura  = nDescartados
+      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="_restaurarDescartados()">Restaurar ${nDescartados} descartado(s)</button>`
+      : '';
+
+    if (!activos.length) {
+      panel.innerHTML = `<span style="color:#2a8">✓ Sin proveedores pendientes.</span> ${btnRestaura}`;
+      return;
+    }
+
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-weight:600;color:var(--txt-2)">${activos.length} proveedor(es) sin registrar</span>
+        ${btnRestaura}
+      </div>
+      <div style="max-height:180px;overflow:auto">
+      ${activos.map(p => {
+        const nitNorm = esc(_normNit(p.nit));
+        const nomEsc  = esc(p.nombre || '');
+        const nitEsc  = esc(p.nit || '');
+        return `
+          <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border)">
+            <div style="flex:1">
+              <span style="font-weight:500">${esc(p.nombre || '(sin nombre)')}</span>
+              ${p.nit ? `<span style="color:var(--txt-3);font-size:11px"> · NIT ${nitEsc}</span>` : ''}
+              <span style="color:var(--txt-3);font-size:11px"> · ${p.count} doc.</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="font-size:11px"
+              onclick="abrirInscribirProveedor('${nitEsc}','${nomEsc}')">Inscribir</button>
+            <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--txt-3)"
+              onclick="_descartarProveedor('${nitNorm}','${nomEsc}')" title="No registrar este proveedor">✕</button>
+          </div>`;
+      }).join('')}
+      </div>`;
+  } catch(e) {
+    panel.innerHTML = `<span style="color:#c33">Error: ${esc(e.message)}</span>`;
+  }
+}
+
+async function crearProveedor(){
+  const nit    = ($('#prov-nit')?.value || '').trim();
+  const nombre = ($('#prov-nombre')?.value || '').trim();
+  const zona   = ($('#prov-zona')?.value || '').trim();
+  const municipio = ($('#prov-municipio')?.value || '').trim();
+  const telefono  = ($('#prov-telefono')?.value || '').trim();
+  const correo    = ($('#prov-correo')?.value || '').trim();
+  const msg = $('#msg-prov');
+  if (!nit)    { msg.textContent = 'NIT requerido'; msg.style.color = '#c33'; return; }
+  if (!nombre) { msg.textContent = 'Razón social requerida'; msg.style.color = '#c33'; return; }
+
+  if (_editandoProveedorId) {
+    msg.textContent = 'Guardando…'; msg.style.color = 'var(--txt-2)';
+    try {
+      const r = await fetch(`/proveedores/${encodeURIComponent(_editandoProveedorId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nit, nombre, zona, municipio, telefono, correo }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Error');
+      msg.textContent = '✓ Proveedor actualizado'; msg.style.color = '#2a8';
+      _editandoProveedorId = null;
+      $('#btn-guardar-prov').textContent = 'Agregar';
+      $('#btn-guardar-prov').classList.replace('btn-secondary', 'btn-primary');
+      ['prov-nit','prov-nombre','prov-municipio','prov-telefono','prov-correo'].forEach(id => { const el = $('#'+id); if (el) el.value = ''; });
+      if ($('#prov-zona')) $('#prov-zona').value = '';
+      cargarProveedoresAdmin();
+      cargarAutocompletes();
+    } catch(e) { msg.textContent = 'Error: ' + e.message; msg.style.color = '#c33'; }
+    return;
+  }
+
+  msg.textContent = 'Creando…'; msg.style.color = 'var(--txt-2)';
+  try{
+    const r = await fetch('/proveedores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nit, nombre, zona, municipio, telefono, correo }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Error');
+    msg.textContent = '✓ Proveedor inscrito'; msg.style.color = '#2a8';
+    ['prov-nit','prov-nombre','prov-municipio','prov-telefono','prov-correo'].forEach(id => { const el = $('#'+id); if (el) el.value = ''; });
+    if ($('#prov-zona')) $('#prov-zona').value = '';
+    cargarProveedoresAdmin();
+    cargarAutocompletes();
+  }catch(e){ msg.textContent = 'Error: ' + e.message; msg.style.color = '#c33'; }
+}
+
+async function editarProveedor(id) {
+  const msg = $('#msg-prov');
+  msg.textContent = 'Cargando…'; msg.style.color = 'var(--txt-2)';
+  try {
+    const p = await fetch(`/proveedores/${encodeURIComponent(id)}`).then(r => r.json());
+    if (p.error) throw new Error(p.error);
+    if ($('#prov-nit'))      $('#prov-nit').value      = p.nit       || '';
+    if ($('#prov-nombre'))   $('#prov-nombre').value   = p.nombre    || '';
+    if ($('#prov-zona'))     $('#prov-zona').value      = p.zona      || '';
+    if ($('#prov-municipio'))$('#prov-municipio').value = p.municipio || '';
+    if ($('#prov-telefono')) $('#prov-telefono').value  = p.telefono  || '';
+    if ($('#prov-correo'))   $('#prov-correo').value    = p.correo    || '';
+    _editandoProveedorId = id;
+    $('#btn-guardar-prov').textContent = 'Guardar cambios';
+    $('#btn-guardar-prov').classList.replace('btn-primary', 'btn-secondary');
+    msg.textContent = 'Editando proveedor — modifica los campos y haz clic en Guardar cambios';
+    msg.style.color = 'var(--txt-2)';
+    $('#prov-nit').focus();
+    document.getElementById('cfg-proveedores').scrollIntoView({ behavior: 'smooth' });
+  } catch(e) { msg.textContent = 'Error: ' + e.message; msg.style.color = '#c33'; }
+}
+
+async function toggleProveedor(id, estaActivo){
+  try{
+    const r = await fetch(`/proveedores/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ activo: !estaActivo }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Error');
+    cargarProveedoresAdmin();
+    cargarAutocompletes();
+  }catch(e){ alert('Error: ' + e.message); }
+}
+
+function abrirInscribirProveedor(nit, nombre){
+  abrirConfig();
+  const det = document.getElementById('cfg-proveedores');
+  if (det) { det.open = true; det.scrollIntoView({ behavior: 'smooth' }); }
+  if (nit    && $('#prov-nit'))    $('#prov-nit').value    = nit;
+  if (nombre && $('#prov-nombre')) $('#prov-nombre').value = nombre;
+}
+
 function renderLogoPreview(){
   const p = $('#logo-preview');
   if (_logoDataUrl) p.innerHTML = `<img src="${esc(_logoDataUrl)}" style="max-width:100%;max-height:100%;object-fit:contain">`;

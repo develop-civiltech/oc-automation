@@ -8,11 +8,12 @@ Consola web de gestión de requerimientos, órdenes de compra y órdenes de serv
 
 | Módulo | Función |
 |--------|---------|
-| **1.1 Requerimientos** | Visualiza solicitudes de compra recibidas por correo, agrupadas por proyecto. |
-| **1.2 Generar OC** | Genera órdenes de compra desde un requerimiento o desde una cotización subida manualmente (PDF, Excel, imagen). Usa Gemini AI para extraer ítems automáticamente. |
-| **1.3 Registro OCs** | Historial de órdenes de compra emitidas con búsqueda, filtros, y acciones de aprobación, pago y entrega. |
+| **1.1 Requerimientos** | Visualiza solicitudes de compra recibidas por correo. Genera comparativa de proveedores y emite OC(s) en borrador. Bloquea emisión si el proveedor no está registrado. |
+| **1.2 Generar OC** | Genera órdenes de compra desde una cotización (PDF, Excel, imagen). IA extrae ítems y precios. Autocomplete NIT ↔ Proveedor en tabla de ítems. Bloquea emisión si algún proveedor no está registrado. |
+| **1.3 Registro OCs** | Historial de órdenes de compra con búsqueda, filtros (Aprobadas excluye entregadas), aprobación, pago y entrega. |
 | **1.4 Órdenes de Servicio** | Crea nuevas órdenes de servicio con asistencia de IA para generar el clausulado. |
 | **1.5 Registro OSs** | Historial de órdenes de servicio emitidas con edición de borradores y aprobación. |
+| **Configuración ERP** | Administración de proveedores registrados: alta, edición, búsqueda y detección de proveedores con historial OC/OS no inscritos en el catálogo. |
 
 ---
 
@@ -43,18 +44,25 @@ Consola web (http://localhost:3001)
          └─ Gemini API           ← Extracción de ítems desde cotizaciones
 ```
 
-**Base de datos:** Listas de SharePoint (fuente principal). Los archivos CSV en `data/` son respaldo de emergencia y se usan automáticamente si SharePoint no está disponible.
+**Base de datos dual:**
 
-| Lista SharePoint | Contenido |
-|-----------------|-----------|
-| `HistorialPrecios` | Precios pagados por OC y cotización (Buscador de Precios) |
-| `Proveedores` | Catálogo activo de proveedores |
-| `Insumos` | Catálogo maestro de insumos |
-| `Proyectos` | Proyectos activos y su zona |
-| `OrdenesCompra` | Órdenes de compra emitidas |
-| `OrdenesServicio` | Órdenes de servicio emitidas |
-| `Requerimientos` | Solicitudes de compra procesadas |
-| `Remisiones` | Remisiones generadas |
+- **SharePoint** — fuente de verdad. Todas las escrituras van primero a SharePoint.
+- **SQLite local** (`data/local.db`, gestionado por `db.js`) — caché de lectura rápida. Se sincroniza automáticamente desde SharePoint cada 2 minutos via `syncService.js`. Permite que la consola cargue instantáneamente aunque SharePoint tarde.
+
+> Cada escritura a SharePoint actualiza también SQLite de forma inmediata para que la UI refleje los cambios sin esperar el ciclo de sincronización.
+
+| Lista SharePoint | SQLite | Contenido |
+|-----------------|--------|-----------|
+| `HistorialPrecios` | — | Precios pagados por OC y cotización (Buscador de Precios) |
+| `Proveedores` | `proveedores` | Catálogo activo de proveedores con NIT, nombre, zona, municipio |
+| `Insumos` | — | Catálogo maestro de insumos |
+| `Proyectos` | — | Proyectos activos y su zona |
+| `OrdenesCompra` | `ordenes_compra` | Órdenes de compra emitidas |
+| `OrdenesServicio` | `ordenes_servicio` | Órdenes de servicio emitidas |
+| `Requerimientos` | `requerimientos` | Solicitudes de compra procesadas |
+| `Remisiones` | `remisiones` | Remisiones generadas |
+
+> **Campo NIT en SharePoint:** la lista `Proveedores` usa el campo `razonSocial` para el nombre legal. La columna `nombre` es la representación local en SQLite.
 
 ---
 
@@ -202,7 +210,9 @@ oc-automation/
 ├── INSTALACION.md                    ← Guía de instalación detallada
 │
 ├── src/
-│   ├── servidor-cotizaciones.js      ← Servidor web principal (puerto 3001)
+│   ├── servidor-cotizaciones.js      ← Servidor web principal (puerto 3001) + API REST
+│   ├── db.js                         ← Caché SQLite local (lectura rápida + escritura inmediata)
+│   ├── syncService.js                ← Sincronización SharePoint → SQLite (cada 2 min)
 │   ├── leerCorreos.js                ← Lectura de correos vía Microsoft Graph
 │   ├── procesarCorreo.js             ← Orquestador de procesamiento de correos
 │   ├── leerRequerimiento.js          ← Extracción desde Excel de requerimiento
@@ -260,6 +270,18 @@ oc-automation/
 - **Tarea programada**: instalar solo en el equipo central. Los demás equipos únicamente abren la consola web.
 - **Scripts de migración** (`src/scripts/`): se ejecutaron una vez para poblar SharePoint. No ejecutar en equipos adicionales.
 - **Desinstalación**: eliminar la carpeta del software. No instala nada en el sistema operativo más allá de su carpeta propia.
+
+---
+
+## Gestión de proveedores
+
+La lista `Proveedores` en SharePoint es el catálogo oficial. Para mantenerla actualizada:
+
+- **Inscribir proveedor**: Configuración ERP → formulario con NIT, nombre, zona, municipio, teléfono, correo.
+- **Detectar sin registrar**: botón "Detectar sin registrar" en la sección de proveedores. Cruza el historial de OCs y OSs contra el catálogo y muestra los que aún no están inscritos.
+- **Validación automática**: antes de generar una OC (módulos 1.1 y 1.2), el sistema verifica que todos los proveedores seleccionados estén inscritos. Si alguno no lo está, bloquea la emisión y abre el formulario de inscripción.
+
+**Normalización de NIT**: el sistema compara solo los 9 primeros dígitos del NIT (sin dígito de verificación ni puntos), por lo que `900.123.456-1`, `900123456` y `9001234561` se consideran el mismo proveedor.
 
 ---
 
