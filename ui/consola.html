@@ -1110,11 +1110,7 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
             <input class="td-input" id="prov-buscar" placeholder="Buscar por nombre, NIT o municipio…"
               oninput="_filtrarProveedoresCfg()"
               style="flex:1;border:1px solid var(--border);padding:6px 10px;font-size:12px">
-            <button class="btn btn-ghost btn-sm" onclick="mostrarHistorialNoRegistrados()" title="Ver proveedores en OCs/OSs que no están inscritos">
-              Detectar sin registrar
-            </button>
           </div>
-          <div id="historial-prov-panel" style="display:none;margin-top:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);padding:10px;font-size:12px"></div>
           <div id="lista-proveedores-cfg" style="margin-top:8px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:4px"></div>
         </div>
       </details>
@@ -1221,7 +1217,7 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
             <input class="td-input" id="bp-q" placeholder="Insumo o servicio..." style="border:1px solid var(--border);padding:7px 10px" onkeydown="if(event.key==='Enter')buscarPrecios()">
             <button class="btn btn-primary btn-sm" onclick="buscarPrecios()">Buscar</button>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center;margin-bottom:12px">
+          <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:8px;align-items:center;margin-bottom:12px">
             <select id="bp-zona" class="td-input" style="border:1px solid var(--border);padding:7px 10px">
               <option value="">Todas las zonas</option>
               <option value="Centro">Centro</option><option value="Caribe">Caribe</option>
@@ -1230,6 +1226,9 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
               <option value="Internacional">Internacional</option>
             </select>
             <input class="td-input" id="bp-proveedor" placeholder="Proveedor (nombre o NIT)" style="border:1px solid var(--border);padding:7px 10px">
+            <label style="font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" id="bp-incluir-oc" checked> Incluir OC
+            </label>
             <label style="font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">
               <input type="checkbox" id="bp-incluir-os" checked> Incluir OS
             </label>
@@ -1290,22 +1289,6 @@ let _editReqItems = [];
 let _editandoProyectoId  = null;
 let _editandoProveedorId  = null;
 let _todosProveedoresCfg  = [];
-const _PROV_DESCARTADOS_KEY = 'erp-prov-descartados';
-const _normNit = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
-function _getDescartados() {
-  try { return new Set(JSON.parse(localStorage.getItem(_PROV_DESCARTADOS_KEY) || '[]')); }
-  catch { return new Set(); }
-}
-function _descartarProveedor(nitNorm, nombre) {
-  const set = _getDescartados();
-  set.add(nitNorm || ('nom:' + String(nombre).toLowerCase().trim()));
-  localStorage.setItem(_PROV_DESCARTADOS_KEY, JSON.stringify([...set]));
-  mostrarHistorialNoRegistrados();
-}
-function _restaurarDescartados() {
-  localStorage.removeItem(_PROV_DESCARTADOS_KEY);
-  mostrarHistorialNoRegistrados();
-}
 let _osExtraccion = null;
 
 const REFRESH_MS = 60 * 60 * 1000;     // 1 hora
@@ -1686,7 +1669,11 @@ function editarOSModal(id) {
       </div>` : ''}
       <div id="ose-totales" style="text-align:right;font-size:12px;margin-bottom:12px"></div>
       <label style="font-size:11px;font-weight:600;color:var(--txt-2);display:block;margin-bottom:3px">CLAUSULADO</label>
-      <textarea id="ose-clausulas" rows="6" style="width:100%;resize:vertical;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 9px;color:var(--txt);font-family:monospace;font-size:11px;margin-bottom:14px;box-sizing:border-box">${esc(os.clausulas || '')}</textarea>
+      <textarea id="ose-clausulas" rows="6" style="width:100%;resize:vertical;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 9px;color:var(--txt);font-family:monospace;font-size:11px;margin-bottom:12px;box-sizing:border-box">${esc(os.clausulas || '')}</textarea>
+      <label style="font-size:11px;font-weight:600;color:var(--txt-2);display:block;margin-bottom:3px;margin-top:2px">CONDICIONES COMERCIALES</label>
+      <textarea id="ose-condiciones" rows="3" style="width:100%;resize:vertical;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 9px;color:var(--txt);font-family:var(--sans);font-size:12px;margin-bottom:12px;box-sizing:border-box">${esc(os.condicionesComerciales || '')}</textarea>
+      <label style="font-size:11px;font-weight:600;color:var(--txt-2);display:block;margin-bottom:3px">OBSERVACIONES</label>
+      <textarea id="ose-observaciones" rows="3" style="width:100%;resize:vertical;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:7px 9px;color:var(--txt);font-family:var(--sans);font-size:12px;margin-bottom:14px;box-sizing:border-box">${esc(os.observaciones || '')}</textarea>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="ose-cancelar">Cancelar</button>
         <button class="btn btn-ghost btn-sm" id="ose-agregar">+ Ítem</button>
@@ -1722,8 +1709,8 @@ function editarOSModal(id) {
           aiuA: totales.aA, aiuI: totales.aI, aiuU: totales.aU,
           tipoServicio:           (wrap.querySelector('#ose-tipo-servicio')?.value ?? os.tipoServicio) || '',
           clausulas:              (wrap.querySelector('#ose-clausulas')?.value ?? os.clausulas) || '',
-          condicionesComerciales: os.condicionesComerciales || '',
-          observaciones:          os.observaciones || '',
+          condicionesComerciales: (wrap.querySelector('#ose-condiciones')?.value  ?? os.condicionesComerciales)  || '',
+          observaciones:          (wrap.querySelector('#ose-observaciones')?.value ?? os.observaciones)           || '',
         }),
       });
       const data = await r.json();
@@ -2123,6 +2110,24 @@ async function emitirOS() {
   const os = recolectarDatosOS();
   if (!os) return;
 
+  // Validar proveedor inscrito (misma lógica que módulo OC)
+  {
+    const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const nitN = _normN(os.proveedorNit);
+    const nom  = (os.proveedorNombre || '').trim().toLowerCase();
+    const dbProv = ESTADO.proveedoresDB || [];
+    const registrado = dbProv.some(r =>
+      (nitN && _normN(r.nit) === nitN) ||
+      (nom  && (r.razonSocial || r.nombre || '').toLowerCase() === nom)
+    );
+    if (!registrado && (nitN || nom)) {
+      const label = `${os.proveedorNombre || '(sin nombre)'}${os.proveedorNit ? ' · NIT ' + os.proveedorNit : ''}`;
+      alert(`No se puede crear la OS.\n\nProveedor no registrado en el catálogo:\n• ${label}\n\nInscríbelo en Configuración ERP → Inscribir proveedores y vuelve a intentarlo.`);
+      abrirInscribirProveedor(os.proveedorNit || '', os.proveedorNombre || '');
+      return;
+    }
+  }
+
   const btn = $('#btn-emitir-os');
   const spinner = $('#spinner-emitir-os');
   const msg = $('#msg-emitir-os');
@@ -2190,10 +2195,18 @@ async function cargarAutocompletes(){
   if (dlOsProv) dlOsProv.innerHTML = ESTADO.proveedoresDB.map(p => `<option value="${esc(p.nit)}" label="${esc(p.razonSocial || p.nombre || '')}">`).join('');
   const osProyOpts = '<option value="">— Seleccione —</option>' +
     ESTADO.proyectos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
-  if ($('#os-proyecto')) $('#os-proyecto').innerHTML = osProyOpts;
+  if ($('#os-proyecto')) {
+    const _osProy = $('#os-proyecto').value;
+    $('#os-proyecto').innerHTML = osProyOpts;
+    if (_osProy) $('#os-proyecto').value = _osProy;
+  }
   const osCotProyOpts = '<option value="">— Detectar del documento —</option>' +
     ESTADO.proyectos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
-  if ($('#os-cot-proyecto')) $('#os-cot-proyecto').innerHTML = osCotProyOpts;
+  if ($('#os-cot-proyecto')) {
+    const _osCotProy = $('#os-cot-proyecto').value;
+    $('#os-cot-proyecto').innerHTML = osCotProyOpts;
+    if (_osCotProy) $('#os-cot-proyecto').value = _osCotProy;
+  }
   const fOsP = $('#filtro-os-proyecto');
   if (fOsP) fOsP.innerHTML = proyHtml;
 }
@@ -4247,13 +4260,14 @@ async function buscarPrecios() {
   const q         = document.getElementById('bp-q').value.trim();
   const zona      = document.getElementById('bp-zona').value;
   const proveedor = document.getElementById('bp-proveedor').value.trim();
+  const incluirOC = document.getElementById('bp-incluir-oc').checked;
   const incluirOS = document.getElementById('bp-incluir-os').checked;
 
   document.getElementById('bp-resultado').style.display = 'none';
   document.getElementById('bp-empty').style.display     = 'none';
   document.getElementById('bp-loading').style.display   = 'block';
 
-  const params = new URLSearchParams({ q, zona, proveedor, incluirOS });
+  const params = new URLSearchParams({ q, zona, proveedor, incluirOC, incluirOS });
   let data = [];
   try { data = await fetch(`/precios/buscar?${params}`).then(r => r.json()); } catch {}
   if (!Array.isArray(data)) data = [];
@@ -4413,59 +4427,6 @@ function _filtrarProveedoresCfg() {
         <button class="btn btn-ghost btn-sm" onclick="toggleProveedor('${esc(String(p.id))}', ${activo})">${activo ? 'Inactivar' : 'Activar'}</button>
       </div>`;
   }).join('');
-}
-
-async function mostrarHistorialNoRegistrados() {
-  const panel = $('#historial-prov-panel');
-  if (!panel) return;
-  panel.style.display = 'block';
-  panel.innerHTML = '<span style="color:var(--txt-3)">Analizando historial…</span>';
-  try {
-    let lista = await fetch('/proveedores/historial').then(r => r.json());
-    if (!Array.isArray(lista)) lista = [];
-
-    const descartados  = _getDescartados();
-    const activos      = lista.filter(p => {
-      const key = _normNit(p.nit) || ('nom:' + String(p.nombre || '').toLowerCase().trim());
-      return !descartados.has(key);
-    });
-    const nDescartados = lista.length - activos.length;
-    const btnRestaura  = nDescartados
-      ? `<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="_restaurarDescartados()">Restaurar ${nDescartados} descartado(s)</button>`
-      : '';
-
-    if (!activos.length) {
-      panel.innerHTML = `<span style="color:#2a8">✓ Sin proveedores pendientes.</span> ${btnRestaura}`;
-      return;
-    }
-
-    panel.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <span style="font-weight:600;color:var(--txt-2)">${activos.length} proveedor(es) sin registrar</span>
-        ${btnRestaura}
-      </div>
-      <div style="max-height:180px;overflow:auto">
-      ${activos.map(p => {
-        const nitNorm = esc(_normNit(p.nit));
-        const nomEsc  = esc(p.nombre || '');
-        const nitEsc  = esc(p.nit || '');
-        return `
-          <div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border)">
-            <div style="flex:1">
-              <span style="font-weight:500">${esc(p.nombre || '(sin nombre)')}</span>
-              ${p.nit ? `<span style="color:var(--txt-3);font-size:11px"> · NIT ${nitEsc}</span>` : ''}
-              <span style="color:var(--txt-3);font-size:11px"> · ${p.count} doc.</span>
-            </div>
-            <button class="btn btn-ghost btn-sm" style="font-size:11px"
-              onclick="abrirInscribirProveedor('${nitEsc}','${nomEsc}')">Inscribir</button>
-            <button class="btn btn-ghost btn-sm" style="font-size:11px;color:var(--txt-3)"
-              onclick="_descartarProveedor('${nitNorm}','${nomEsc}')" title="No registrar este proveedor">✕</button>
-          </div>`;
-      }).join('')}
-      </div>`;
-  } catch(e) {
-    panel.innerHTML = `<span style="color:#c33">Error: ${esc(e.message)}</span>`;
-  }
 }
 
 async function crearProveedor(){
@@ -4665,6 +4626,7 @@ async function guardarConfig(){
 
 let _invApuData = '';     // texto extraído del Excel APU
 let _invIaHistorial = []; // historial de conversación IA
+let _invProyectoFiltro = null; // rastrea proyecto activo para resetear IA al cambiar
 
 function invTab(name) {
   $$('.inv-subtab').forEach(b => b.classList.toggle('active', b.dataset.sub === name));
@@ -4689,6 +4651,15 @@ async function cargarInventario() {
     if (valorActual && proyActivos.includes(valorActual)) sel.value = valorActual;
   }
   const proyecto = sel?.value || '';
+  if (_invProyectoFiltro !== null && proyecto !== _invProyectoFiltro) {
+    _invIaHistorial = [];
+    _invApuData = '';
+    const chat = $('#inv-ia-chat');
+    if (chat) chat.innerHTML = '';
+    const apuOk = $('#inv-ia-apu-ok');
+    if (apuOk) apuOk.style.display = 'none';
+  }
+  _invProyectoFiltro = proyecto;
   // Poblar selector de OCs (filtrado por proyecto si está seleccionado)
   const selOC = $('#inv-ent-oc');
   if (selOC) {

@@ -689,13 +689,13 @@ ${PROMPT}` }
 
 // ── Gemini texto (prompt puro, sin documento adjunto) ─────────────────────────
 
-async function geminiTexto(prompt, timeoutMs = 5000) {
+async function geminiTexto(prompt, timeoutMs = 5000, extraConfig = {}) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada en .env');
   const MODELO = 'gemini-2.5-flash';
   const URL    = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_KEY}`;
   const bodyStr = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+    generationConfig: { temperature: 0.3, maxOutputTokens: 4096, ...extraConfig },
   });
   const respuesta = await new Promise((resolve, reject) => {
     const req = require('https').request(URL, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
@@ -970,11 +970,6 @@ const servidor = http.createServer(async (req, res) => {
     return json(localDb.getProveedores());
   }
 
-  // ── GET /proveedores/historial → proveedores en OCs/OSs no registrados ──
-  if (req.method === 'GET' && url === '/proveedores/historial') {
-    return json(localDb.getProveedoresDesdeHistorial());
-  }
-
   // ── GET /proveedores/:id ─────────────────────────────────────────────────
   const mProvId = url.match(/^\/proveedores\/([^\/]+)$/);
   if (req.method === 'GET' && mProvId) {
@@ -1086,20 +1081,22 @@ const servidor = http.createServer(async (req, res) => {
       const q        = sp.get('q') || '';
       const zona     = sp.get('zona') || '';
       const provFilt = (sp.get('proveedor') || '').toUpperCase().trim();
+      const inclOC   = sp.get('incluirOC') !== 'false';
       const inclOS   = sp.get('incluirOS') !== 'false';
 
       const norm = s => String(s || '').toUpperCase()
         .normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/[^A-Z0-9\s\/\-]/g, ' ').replace(/\s+/g, ' ').trim();
-      const tokens = s => norm(s).split(' ').filter(t => t.length >= 2);
+      const tokens = s => norm(s).split(' ').filter(t => t.length >= 3);
       const qTok = new Set(tokens(q));
       const matches = s => {
         if (!q) return true;
         const n = norm(s);
         if (n.includes(norm(q))) return true;
+        const qTokArr = [...qTok];
+        if (!qTokArr.length) return true;
         const cTok = new Set(tokens(s));
-        for (const t of qTok) if (cTok.has(t)) return true;
-        return false;
+        return qTokArr.every(t => cTok.has(t));
       };
 
       const proyectos = await obtenerProyectosSP({ soloActivos: false });
@@ -1113,7 +1110,7 @@ const servidor = http.createServer(async (req, res) => {
         const nombresUnicos = [...new Set(historial.map(r => String(r.insumo || '').trim()).filter(Boolean))];
         try {
           const prompt = `Lista de suministros de construcción:\n${nombresUnicos.join('\n')}\n\nDevuelve SOLO los nombres de esa lista que correspondan, sean variantes, sinónimos, plural/singular o compuestos del término "${q}". JSON array de strings exactos de la lista. Si ninguno corresponde: [].`;
-          const respGemini = await geminiTexto(prompt);
+          const respGemini = await geminiTexto(prompt, 10000);
           const parsed = JSON.parse(respGemini.replace(/```json|```/g, '').trim());
           if (Array.isArray(parsed) && parsed.length) {
             const normSet = new Set(parsed.map(n => norm(n)));
@@ -1131,18 +1128,20 @@ const servidor = http.createServer(async (req, res) => {
       const resultados = [];
 
       // — Fuente OC: HistorialPrecios SP —
-      for (const fila of historial) {
-        const insumo    = String(fila.insumo          || '').trim();
-        const proyecto  = String(fila.proyecto        || '').trim();
-        const proveedor = String(fila.proveedor || fila.nombreProveedor || '').trim();
-        const precio    = parseFloat(fila.precio || fila.precioUnitario) || null;
-        const fecha     = String(fila.fecha           || '').trim();
-        const zonaFila  = zonaDeProyecto[proyecto.toUpperCase()] || '';
+      if (inclOC) {
+        for (const fila of historial) {
+          const insumo    = String(fila.insumo          || '').trim();
+          const proyecto  = String(fila.proyecto        || '').trim();
+          const proveedor = String(fila.proveedor || fila.nombreProveedor || '').trim();
+          const precio    = parseFloat(fila.precio || fila.precioUnitario) || null;
+          const fecha     = String(fila.fecha           || '').trim();
+          const zonaFila  = zonaDeProyecto[proyecto.toUpperCase()] || '';
 
-        if (!matchesConGemini(insumo)) continue;
-        if (zona && zonaFila && norm(zonaFila) !== norm(zona)) continue;
-        if (provFilt && !norm(proveedor).includes(provFilt)) continue;
-        resultados.push({ fuente: 'OC', insumo, proveedor, zona: zonaFila, precio, fecha, proyecto });
+          if (!matchesConGemini(insumo)) continue;
+          if (zona && zonaFila && norm(zonaFila) !== norm(zona)) continue;
+          if (provFilt && !norm(proveedor).includes(provFilt)) continue;
+          resultados.push({ fuente: 'OC', insumo, proveedor, zona: zonaFila, precio, fecha, proyecto });
+        }
       }
 
       // — Fuente OS: OrdenesServicio SQLite —
@@ -2714,21 +2713,24 @@ PRINCIPIOS RECTORES DEL CLAUSULADO (aplica todos sin excepción):
 7. RESPONSABILIDAD POR DAÑOS: El CONTRATISTA responde por todos los daños a infraestructura existente, redes, estructuras o terceros causados durante la ejecución de sus actividades.
 
 ESTRUCTURA REQUERIDA (redacta exactamente estas cláusulas en este orden):
-PRIMERA - OBJETO
-SEGUNDA - ALCANCE Y EXCLUSIONES (qué incluye y qué NO cubre el contrato; deja claro que condiciones imprevisibles previsibles son riesgo del CONTRATISTA)
-TERCERA - OBLIGACIONES DEL CONTRATISTA (obligaciones operativas que protejan al CONTRATANTE: manejo de residuos en sitio designado, seguridad, señalización, limpieza, entrega de zona limpia, reporte de avance)
-CUARTA - VALOR Y FORMA DE PAGO (cantidades ejecutadas en obra, precio unitario fijo, sin adicionales, sin reevaluación; forma de pago vinculada a entrega satisfactoria)
-QUINTA - PLAZO (fecha de inicio y terminación fijas; prórrogas solo con acuerdo escrito previo del CONTRATANTE; mora genera descuentos o terminación)
-SEXTA - RIESGOS Y RESPONSABILIDADES (asignación explícita de riesgos al CONTRATISTA; daños a infraestructura; responsabilidad frente a terceros)
-SÉPTIMA - GARANTÍAS Y CALIDAD (el trabajo ejecutado debe cumplir especificaciones técnicas; el CONTRATISTA repara defectos sin costo adicional dentro del plazo de garantía)
-OCTAVA - TERMINACIÓN ANTICIPADA (causales de terminación por incumplimiento del CONTRATISTA; terminación por conveniencia del CONTRATANTE sin penalidad)
-NOVENA - CONFIDENCIALIDAD Y CESIÓN (prohibición de revelar información del proyecto; no puede ceder el contrato sin autorización escrita del CONTRATANTE)
+CERO - OBJETO
+PRIMERA - ALCANCE Y EXCLUSIONES (qué incluye y qué NO cubre el contrato; deja claro que condiciones imprevisibles previsibles son riesgo del CONTRATISTA)
+SEGUNDA - OBLIGACIONES DEL CONTRATISTA (obligaciones operativas que protejan al CONTRATANTE: manejo de residuos en sitio designado, seguridad, señalización, limpieza, entrega de zona limpia, reporte de avance)
+TERCERA - VALOR Y FORMA DE PAGO (cantidades ejecutadas en obra, precio unitario fijo, sin adicionales, sin reevaluación; forma de pago vinculada a entrega satisfactoria)
+CUARTA - PLAZO (fecha de inicio y terminación fijas; prórrogas solo con acuerdo escrito previo del CONTRATANTE; mora genera descuentos o terminación)
+QUINTA - RIESGOS Y RESPONSABILIDADES (asignación explícita de riesgos al CONTRATISTA; daños a infraestructura; responsabilidad frente a terceros)
+SEXTA - GARANTÍAS Y CALIDAD (el trabajo ejecutado debe cumplir especificaciones técnicas; el CONTRATISTA repara defectos sin costo adicional dentro del plazo de garantía)
+SÉPTIMA - TERMINACIÓN ANTICIPADA (causales de terminación por incumplimiento del CONTRATISTA; terminación por conveniencia del CONTRATANTE sin penalidad)
+OCTAVA - CONFIDENCIALIDAD Y CESIÓN (prohibición de revelar información del proyecto; no puede ceder el contrato sin autorización escrita del CONTRATANTE)
 
 FORMATO:
 - Lenguaje jurídico colombiano formal, redacción en tercera persona
 - Sin viñetas ni markdown; usa solo párrafos de texto corrido bajo el título de cada cláusula
 - Devuelve SOLO el clausulado numerado, sin introducciones, encabezados ni comentarios adicionales`;
-        const clausulas = await geminiTexto(prompt);
+        const clausulas = await geminiTexto(prompt, 30000, {
+          thinkingConfig: { thinkingBudget: 0 },
+          maxOutputTokens: 2048,
+        });
         json({ ok: true, clausulas });
       } catch (err) { json({ error: err.message }, 500); }
     });
@@ -3374,13 +3376,21 @@ FORMATO:
 
         const apuTexto = apuData ? `\n\nRENDIMIENTOS APU PROPORCIONADOS:\n${apuData}` : '';
 
+        const proyectoLabel = proyecto ? `el proyecto "${proyecto}"` : 'todos los proyectos activos';
+        const scopeNote = proyecto
+          ? `Los datos que siguen corresponden EXCLUSIVAMENTE a "${proyecto}". Son completos para ese proyecto.`
+          : `Los datos que siguen corresponden a TODOS los proyectos combinados (no se aplicó filtro de proyecto).`;
+
         const prompt = `Eres un ingeniero senior de control de presupuestos de construcción, con amplia experticia en la detección y análisis de desviaciones de consumos de materiales en proyectos de ingeniería civil. Tu enfoque es práctico y orientado a alertas tempranas: identificas sobreconsumos, desperdicios, inconsistencias entre entradas y salidas de almacén, y proyectas el impacto presupuestal de las tendencias observadas.
 
-PROYECTO: ${proyecto}
+ALCANCE DE LOS DATOS: ${scopeNote}
+PROYECTO: ${proyecto || 'Todos los proyectos'}
 
 INVENTARIO ACTUAL (${new Date().toLocaleDateString('es-CO')}):
-${resumenConsumos || 'Sin movimientos registrados.'}
+${resumenConsumos || `Sin movimientos registrados para ${proyectoLabel}.`}
 ${apuTexto}
+
+INSTRUCCIÓN: Los datos anteriores son la totalidad de lo disponible para el filtro aplicado. Si no hay datos, infórmalo directamente sin mencionar restricciones de acceso. Nunca digas que "no tienes acceso" a información — si no hay datos es porque no hay movimientos registrados.
 
 PREGUNTA DEL USUARIO: ${pregunta || 'Analiza los consumos y detecta posibles sobreconsumos o anomalías.'}
 

@@ -353,43 +353,6 @@ function getProveedores({ soloActivos = false } = {}) {
   });
 }
 
-function getProveedoresDesdeHistorial() {
-  const parse = row => { try { return JSON.parse(row.data || '{}'); } catch { return {}; } };
-  const ocs = db().prepare('SELECT data FROM ordenes_compra').all().map(parse);
-  const oss = db().prepare('SELECT data FROM ordenes_servicio').all().map(parse);
-
-  const mapa = new Map();
-  for (const o of [...ocs, ...oss]) {
-    const nit    = String(o.proveedorNit  || o.nit    || '').trim();
-    const nombre = String(o.proveedorNombre || o.proveedor || '').trim();
-    if (!nit && !nombre) continue;
-    const key = (nit || nombre).toLowerCase();
-    if (!mapa.has(key)) mapa.set(key, { nit, nombre, count: 0 });
-    mapa.get(key).count++;
-  }
-
-  const normNit = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
-
-  const registrados = new Set(
-    db().prepare('SELECT nit FROM proveedores').all()
-      .map(r => normNit(r.nit)).filter(Boolean)
-  );
-
-  const registradosNombres = new Set(
-    db().prepare('SELECT nombre FROM proveedores').all()
-      .map(r => String(r.nombre || '').toUpperCase().trim()).filter(Boolean)
-  );
-
-  return [...mapa.values()]
-    .filter(p => {
-      const n = normNit(p.nit);
-      if (n) return !registrados.has(n);
-      const nom = String(p.nombre || '').toUpperCase().trim();
-      return nom ? !registradosNombres.has(nom) : false;
-    })
-    .sort((a, b) => b.count - a.count);
-}
-
 function getInsumos({ soloActivos = true } = {}) {
   const q = soloActivos
     ? 'SELECT * FROM insumos WHERE activo=1 ORDER BY nombre'
@@ -575,7 +538,6 @@ module.exports = {
   getOcIdsConEntrada,
   getNextDocRef,
   getDocumentosInventario,
-  getProveedoresDesdeHistorial,
   upsertProveedor,
   upsertDocumento,
   upsertHistorialFila,
