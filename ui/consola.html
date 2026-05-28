@@ -208,8 +208,23 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
     <button class="btn-refresh" onclick="abrirConfig()" title="Configuración">⚙</button>
     <button class="btn-tema" id="btn-tema" onclick="toggleTema()" title="Cambiar tema"></button>
     <div class="user-chip" id="user-chip">—</div>
+    <button id="btn-logout" class="btn btn-ghost btn-sm" onclick="cerrarSesion()" title="Cerrar sesión" style="display:none;font-size:11px;padding:4px 8px">Salir</button>
   </div>
 </header>
+
+<!-- ── Login overlay ──────────────────────────────────────────────────────── -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:20px">
+  <div style="text-align:center;max-width:400px;padding:40px;background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.4)">
+    <div style="font-size:28px;margin-bottom:8px">🔐</div>
+    <h2 style="font-size:18px;font-weight:700;margin-bottom:6px">ERP Civiltech</h2>
+    <p style="font-size:12px;color:var(--txt-2);margin-bottom:24px">Inicia sesión con tu cuenta corporativa de Microsoft para continuar.</p>
+    <button id="btn-ms-login" class="btn btn-primary" style="width:100%;justify-content:center;gap:8px" onclick="iniciarLoginMicrosoft()">
+      <svg width="16" height="16" viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      Iniciar sesión con Microsoft
+    </button>
+    <div id="login-msg" style="margin-top:14px;font-size:11px;color:var(--txt-2);display:none"></div>
+  </div>
+</div>
 
 <nav class="nav">
   <button class="nav-tab active" data-tab="req" onclick="tab('req')">
@@ -1257,6 +1272,25 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
           </div>
         </div>
       </details>
+
+      <details id="cfg-usuarios" style="border-top:1px solid var(--border);padding-top:18px;display:none">
+        <summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--txt-2);font-weight:600;list-style:none;display:flex;align-items:center;gap:6px">
+          <span>&#9654;</span> Usuarios del ERP
+        </summary>
+        <div style="margin-top:16px">
+          <div class="desc" style="margin-bottom:14px">Aprueba o desactiva cuentas de usuarios. Solo los usuarios con estado Activo pueden iniciar sesión.</div>
+          <button class="btn btn-ghost btn-sm" onclick="cargarUsuariosAdmin()" style="margin-bottom:12px">Actualizar lista</button>
+          <div id="usuarios-loading" style="font-size:12px;color:var(--txt-3);display:none">Cargando...</div>
+          <div class="tabla-wrap" id="usuarios-tabla-wrap" style="display:none">
+            <table id="tabla-usuarios">
+              <thead><tr>
+                <th>Correo</th><th>Nombre</th><th>Cargo</th><th>Rol</th><th>Estado</th><th></th>
+              </tr></thead>
+              <tbody id="tbody-usuarios"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
     </div>
   </div>
 </div>
@@ -1419,11 +1453,99 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden) refre
 // ─────────────────────────────────────────────────────────────────────────────
 async function cargarUsuario(){
   try{
-    const u = await fetch('/me').then(r => r.json());
+    const r = await fetch('/me');
+    if (r.status === 401) { mostrarLoginOverlay(); return false; }
+    const u = await r.json();
     ESTADO.usuario = u;
-    $('#user-chip').textContent = u?.email || u?.nombre || '—';
-  }catch{ $('#user-chip').textContent = 'sin sesión'; }
+    $('#user-chip').textContent = u?.nombre || u?.email || '—';
+    if ($('#btn-logout')) $('#btn-logout').style.display = '';
+    if ($('#login-overlay')) $('#login-overlay').style.display = 'none';
+    return true;
+  } catch { mostrarLoginOverlay(); return false; }
 }
+
+function mostrarLoginOverlay(){
+  const overlay = $('#login-overlay');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  // Mostrar mensaje si redirigido desde callback con error
+  const params = new URLSearchParams(location.search);
+  const err = params.get('auth_error');
+  if (err) {
+    const msg = err === 'pendiente'
+      ? 'Tu cuenta está pendiente de aprobación. Contacta al administrador del ERP.'
+      : `Error de autenticación: ${err}`;
+    const el = $('#login-msg');
+    if (el) { el.textContent = msg; el.style.display = 'block'; }
+    history.replaceState(null, '', '/');
+  }
+}
+
+async function iniciarLoginMicrosoft(){
+  const btn = $('#btn-ms-login');
+  if (btn) btn.disabled = true;
+  try{
+    const { url } = await fetch('/auth/login-url').then(r => r.json());
+    window.location.href = url;
+  } catch(e){
+    if (btn) btn.disabled = false;
+    alert('No se pudo obtener la URL de inicio de sesión. Verifica la configuración del servidor.');
+  }
+}
+
+async function cerrarSesion(){
+  await fetch('/auth/logout', { method: 'POST' });
+  mostrarLoginOverlay();
+  if ($('#btn-logout')) $('#btn-logout').style.display = 'none';
+  if ($('#user-chip')) $('#user-chip').textContent = '—';
+}
+async function cargarUsuariosAdmin(){
+  const tbody  = $('#tbody-usuarios');
+  const wrap   = $('#usuarios-tabla-wrap');
+  const loading = $('#usuarios-loading');
+  if (!tbody) return;
+  if (loading) loading.style.display = 'block';
+  if (wrap)   wrap.style.display = 'none';
+  try {
+    const lista = await fetch('/usuarios').then(r => r.json());
+    if (lista.error) { if (loading) loading.textContent = lista.error; return; }
+    tbody.innerHTML = lista.map(u => `
+      <tr>
+        <td class="mono" style="font-size:11px">${esc(u.email)}</td>
+        <td>${esc(u.nombre || '')}</td>
+        <td>${esc(u.cargo  || '')}</td>
+        <td>
+          <select class="td-input" style="border:1px solid var(--border);padding:4px 8px;font-size:11px"
+            onchange="patchUsuario('${esc(u.sp_id)}','rol',this.value)">
+            <option value="operador" ${u.rol==='operador'?'selected':''}>Operador</option>
+            <option value="admin"    ${u.rol==='admin'   ?'selected':''}>Admin</option>
+          </select>
+        </td>
+        <td>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" ${u.activo?'checked':''} onchange="patchUsuario('${esc(u.sp_id)}','activo',this.checked)">
+            <span class="tag ${u.activo?'tag-aprobada':'tag-borrador'}">${u.activo?'Activo':'Pendiente'}</span>
+          </label>
+        </td>
+        <td style="font-size:10px;color:var(--txt-3)">${u.sp_id}</td>
+      </tr>`).join('');
+    if (loading) loading.style.display = 'none';
+    if (wrap)   wrap.style.display = '';
+  } catch(e) {
+    if (loading) { loading.textContent = 'Error: ' + e.message; }
+  }
+}
+
+async function patchUsuario(spId, campo, valor){
+  try {
+    await fetch(`/usuarios/${spId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [campo]: valor }),
+    });
+  } catch(e) { alert('Error al actualizar usuario: ' + e.message); }
+}
+
 async function cargarRequerimientos(){
   try{
     ESTADO.requerimientos = await fetch('/requerimientos').then(r => r.json());
@@ -4215,6 +4337,13 @@ async function abrirConfig(){
   $('#modal-config').style.display = 'flex';
   cargarProyectosAdmin();
   cargarProveedoresAdmin();
+  // Mostrar sección de usuarios solo a admins
+  const secUsuarios = $('#cfg-usuarios');
+  if (secUsuarios) {
+    const esAdmin = ESTADO.usuario?.rol === 'admin';
+    secUsuarios.style.display = esAdmin ? '' : 'none';
+    if (esAdmin) cargarUsuariosAdmin();
+  }
   try{
     const cfg = await fetch('/config').then(r => r.json());
     _logoDataUrl = cfg.logo || null;
@@ -4621,7 +4750,9 @@ async function guardarConfig(){
     inputReq.addEventListener('change', () => { if (inputReq.files[0]) seleccionarArchivoReq(inputReq.files[0]); });
   }
 
-  await Promise.all([cargarUsuario(), cargarAutocompletes()]);
+  const tieneSession = await cargarUsuario();
+  if (!tieneSession) return; // el overlay de login ya está visible
+  await cargarAutocompletes();
   _actualizarIconoTema(document.documentElement.getAttribute('data-theme') || 'dark');
   try {
     const cfg = await fetch('/config').then(r => r.json());

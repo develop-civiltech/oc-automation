@@ -70,6 +70,11 @@ const LISTAS = [
     tabla:    'movimientos_inventario',
     upsert:   (rows) => db.bulkUpsertDocs('movimientos_inventario', rows),
   },
+  {
+    nombre:   'UsuariosERP',
+    tabla:    null,
+    upsert:   (rows) => db.bulkUpsertUsuarios(rows.map(it => ({ id: it.id, ...(it.fields || {}) }))),
+  },
 ];
 
 // ── Sincronización de una lista ───────────────────────────────────────────────

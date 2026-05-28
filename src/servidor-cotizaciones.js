@@ -28,6 +28,7 @@ const osTemplate       = require('./osTemplate');
 const configApp        = require('./configApp');
 const localDb          = require('./db');
 const syncService      = require('./syncService');
+const auth             = require('./authService');
 
 // Sobreescribe cfg.firmante con el usuario local del .env si está definido.
 // La configuración de empresa (logo, emisor, IVA) sigue viniendo de SharePoint.
@@ -361,10 +362,11 @@ async function calcularEstadoRequerimiento(ctx, reqItem) {
 
 // Cache de IDs de listas SharePoint para no resolverlas en cada request
 const _listCache = {}; // { siteId, Requerimientos, OrdenesCompra, Insumos, Proveedores }
-let _columnasMigradas = false;
-let _osListProvisioned = false;
-let _hpListProvisioned = false;
-let _miListProvisioned = false;
+let _columnasMigradas     = false;
+let _osListProvisioned    = false;
+let _hpListProvisioned    = false;
+let _miListProvisioned    = false;
+let _usrListProvisioned   = false;
 
 async function asegurarListaOS(siteId) {
   // Intenta obtener la lista; si no existe, la crea con todas las columnas del esquema
@@ -487,6 +489,76 @@ async function migrarColumnasOC(siteId, listId) {
   }
 }
 
+async function asegurarListaUsuariosERP(siteId) {
+  const columns = [
+    { name: 'email',  text: { maxLength: 200 }, required: true },
+    { name: 'nombre', text: { maxLength: 200 } },
+    { name: 'cargo',  text: { maxLength: 200 } },
+    { name: 'rol',    choice: { choices: ['admin', 'operador'], displayAs: 'dropDownMenu' } },
+    { name: 'activo', boolean: {} },
+  ];
+  let listId;
+  try { const lst = await g.getListByName(siteId, 'UsuariosERP'); listId = lst?.id; } catch {}
+  if (!listId) {
+    try {
+      const created = await g.post(`/sites/${siteId}/lists`, {
+        displayName: 'UsuariosERP',
+        description: 'Usuarios habilitados para acceder al ERP',
+        list: { template: 'genericList' },
+      });
+      listId = created?.id;
+      console.log('[asegurarListaUsuariosERP] Lista creada:', listId);
+    } catch (e) {
+      if (!String(e.message).includes('409')) { console.warn('[asegurarListaUsuariosERP]', e.message); return; }
+      try { const lst = await g.getListByName(siteId, 'UsuariosERP'); listId = lst?.id; } catch {}
+    }
+  }
+  if (!listId) return;
+  _listCache.UsuariosERP = listId;
+  for (const col of columns) {
+    const { required, ...body } = col;
+    if (required) body.required = true;
+    try { await g.post(`/sites/${siteId}/lists/${listId}/columns`, body); }
+    catch (e) { if (!String(e.message).includes('409')) console.warn(`[asegurarListaUsuariosERP] Col "${col.name}":`, e.message); }
+  }
+}
+
+async function bootstrapAdmin() {
+  if (localDb.countUsuarios() > 0) return;
+  const email = (process.env.USUARIO_EMAIL || '').trim().toLowerCase();
+  if (!email) return;
+
+  const ctx = await ctxSharePoint();
+  let listId = ctx.UsuariosERP;
+
+  if (!listId) {
+    // Esperar hasta 15s a que la lista sea aprovisionada en segundo plano
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const lst = await g.getListByName(ctx.siteId, 'UsuariosERP');
+        if (lst?.id) { listId = lst.id; _listCache.UsuariosERP = listId; break; }
+      } catch {}
+    }
+  }
+  if (!listId) { console.warn('[bootstrap] Lista UsuariosERP no disponible'); return; }
+
+  const adminData = {
+    email,
+    nombre: process.env.USUARIO_NOMBRE || email,
+    cargo:  process.env.USUARIO_CARGO  || 'Administrador',
+    rol:    'admin',
+    activo: true,
+  };
+  try {
+    const item = await g.addListItem(ctx.siteId, listId, adminData);
+    localDb.upsertUsuario({ sp_id: String(item.id), ...adminData });
+    console.log(`[bootstrap] Admin inicial creado: ${email}`);
+  } catch (e) {
+    console.warn('[bootstrap] Error al crear admin:', e.message);
+  }
+}
+
 async function ctxSharePoint() {
   if (_listCache.siteId) return _listCache;
   const host = process.env.SHAREPOINT_HOSTNAME;
@@ -494,7 +566,7 @@ async function ctxSharePoint() {
   if (!host || !sitePath) throw new Error('SHAREPOINT_HOSTNAME / SHAREPOINT_SITE_PATH no configurados');
   const site = await g.getSite(host, sitePath);
   _listCache.siteId = site.id;
-  for (const nombre of ['Requerimientos','OrdenesCompra','Insumos','Proveedores','Remisiones','Proyectos','OrdenesServicio','HistorialPrecios','MovimientosInventario']) {
+  for (const nombre of ['Requerimientos','OrdenesCompra','Insumos','Proveedores','Remisiones','Proyectos','OrdenesServicio','HistorialPrecios','MovimientosInventario','UsuariosERP']) {
     try {
       const lst = await g.getListByName(site.id, nombre);
       if (lst) _listCache[nombre] = lst.id;
@@ -520,6 +592,11 @@ async function ctxSharePoint() {
     _miListProvisioned = true;
     asegurarListaMI(_listCache.siteId).catch(() => {});
   }
+  // Aprovisionar lista UsuariosERP si no existe (solo una vez por proceso)
+  if (!_usrListProvisioned) {
+    _usrListProvisioned = true;
+    asegurarListaUsuariosERP(_listCache.siteId).catch(() => {});
+  }
   return _listCache;
 }
 
@@ -527,8 +604,12 @@ const PORT         = process.env.PUERTO_COTIZACIONES || 3001;
 const PATH_COMPRAS = process.env.PATH_COMPRAS     || path.join(__dirname, '../data/compras.csv');
 const PATH_PROV    = process.env.PATH_PROVEEDORES || path.join(__dirname, '../data/proveedores_depurados_final.csv');
 const PATH_PROY    = process.env.PATH_PROYECTOS   || path.join(__dirname, '../data/tabla_proyectos.csv');
-const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_KEY   = process.env.GEMINI_API_KEY || '';
 const TEMP_DIR     = path.join(__dirname, '../temp/cotizaciones');
+const AUTH_REDIRECT_URI = process.env.AUTH_REDIRECT_URI || `http://localhost:${PORT}/auth/callback`;
+
+// Rutas que no requieren sesión activa
+const RUTAS_PUBLICAS = ['/', '/legacy', '/auth/login-url', '/auth/callback', '/auth/logout', '/me'];
 
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
@@ -945,6 +1026,16 @@ const servidor = http.createServer(async (req, res) => {
     res.end(contenido);
   };
 
+  // ── Middleware de autenticación ──────────────────────────────────────────
+  const esPublica = RUTAS_PUBLICAS.includes(url);
+  const cookies   = auth.parseCookies(req.headers.cookie);
+  const sesion    = auth.validateSession(cookies[auth.COOKIE_NAME]);
+
+  if (!esPublica && !sesion) {
+    return json({ error: 'no_session' }, 401);
+  }
+  req._sesion = sesion; // disponible en todos los handlers
+
   // ── GET / → Consola nueva (4 módulos) ───────────────────────────────────
   if (req.method === 'GET' && url === '/') {
     html(fs.readFileSync(path.join(__dirname, '../ui/consola.html'), 'utf-8'));
@@ -957,12 +1048,79 @@ const servidor = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── GET /me → info del usuario (app-only por ahora) ─────────────────────
+  // ── GET /me → info de la sesión activa ──────────────────────────────────
   if (req.method === 'GET' && url === '/me') {
-    return json({
-      email:  process.env.USUARIO_EMAIL || '',
-      nombre: process.env.USUARIO_NOMBRE || 'Usuario',
+    if (!sesion) return json({ error: 'no_session' }, 401);
+    return json({ email: sesion.email, nombre: sesion.nombre, rol: sesion.rol });
+  }
+
+  // ── GET /auth/login-url → URL de login Microsoft ─────────────────────────
+  if (req.method === 'GET' && url === '/auth/login-url') {
+    return json({ url: auth.getLoginUrl(AUTH_REDIRECT_URI) });
+  }
+
+  // ── GET /auth/callback → intercambia code, crea sesión ───────────────────
+  if (req.method === 'GET' && url === '/auth/callback') {
+    const qs    = new URLSearchParams(req.url.split('?')[1] || '');
+    const code  = qs.get('code')  || '';
+    const state = qs.get('state') || '';
+    const error = qs.get('error') || '';
+
+    if (error) {
+      res.writeHead(302, { 'Location': `/?auth_error=${encodeURIComponent(qs.get('error_description') || error)}` });
+      res.end();
+      return;
+    }
+
+    try {
+      const { email, nombre } = await auth.exchangeCode(code, state, AUTH_REDIRECT_URI);
+
+      // Verificar que el usuario esté registrado y activo
+      const usuario = localDb.getUsuarioByEmail(email);
+      if (!usuario) {
+        // Auto-registrar como pendiente de aprobación
+        try {
+          const ctx = await ctxSharePoint();
+          if (ctx.UsuariosERP) {
+            const item = await g.addListItem(ctx.siteId, ctx.UsuariosERP, {
+              email, nombre, cargo: '', rol: 'operador', activo: false,
+            });
+            localDb.upsertUsuario({ sp_id: String(item.id), email, nombre, cargo: '', rol: 'operador', activo: false });
+          }
+        } catch {}
+        res.writeHead(302, { 'Location': '/?auth_error=pendiente' });
+        res.end();
+        return;
+      }
+      if (!usuario.activo) {
+        res.writeHead(302, { 'Location': '/?auth_error=pendiente' });
+        res.end();
+        return;
+      }
+
+      const sessionId = auth.createSession(email, usuario.nombre || nombre, usuario.rol);
+      res.writeHead(302, {
+        'Set-Cookie': auth.buildSessionCookie(sessionId, AUTH_REDIRECT_URI),
+        'Location':   '/',
+      });
+      res.end();
+    } catch (e) {
+      console.warn('[auth/callback]', e.message);
+      res.writeHead(302, { 'Location': `/?auth_error=${encodeURIComponent(e.message)}` });
+      res.end();
+    }
+    return;
+  }
+
+  // ── POST /auth/logout ─────────────────────────────────────────────────────
+  if (req.method === 'POST' && url === '/auth/logout') {
+    auth.deleteSession(cookies[auth.COOKIE_NAME]);
+    res.writeHead(200, {
+      'Set-Cookie':   auth.clearSessionCookie(),
+      'Content-Type': 'application/json',
     });
+    res.end(JSON.stringify({ ok: true }));
+    return;
   }
 
   // ── GET /proveedores → lista completa desde SQLite ──────────────────────
@@ -3404,6 +3562,40 @@ Responde en español, de forma concisa y práctica. Señala alertas de sobrecons
     return;
   }
 
+  // ── GET /usuarios → lista de usuarios (solo admin) ──────────────────────
+  if (req.method === 'GET' && url === '/usuarios') {
+    if (req._sesion?.rol !== 'admin') return json({ error: 'Acceso denegado' }, 403);
+    return json(localDb.getUsuarios());
+  }
+
+  // ── PATCH /usuarios/:id → actualizar rol/activo (solo admin) ─────────────
+  const mUsrId = url.match(/^\/usuarios\/([^\/]+)$/);
+  if (req.method === 'PATCH' && mUsrId) {
+    if (req._sesion?.rol !== 'admin') return json({ error: 'Acceso denegado' }, 403);
+    const spId = mUsrId[1];
+    const chunks = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+        const ctx = await ctxSharePoint();
+        if (!ctx.UsuariosERP) return json({ error: 'Lista UsuariosERP no disponible' }, 503);
+
+        const fields = {};
+        if (data.activo !== undefined) fields.activo = Boolean(data.activo);
+        if (data.rol    !== undefined) fields.rol    = String(data.rol);
+        if (data.nombre !== undefined) fields.nombre = String(data.nombre);
+        if (data.cargo  !== undefined) fields.cargo  = String(data.cargo);
+
+        await g.updateListItem(ctx.siteId, ctx.UsuariosERP, spId, fields);
+        const existing = localDb.getUsuarios().find(u => u.sp_id === spId) || {};
+        localDb.upsertUsuario({ ...existing, sp_id: spId, ...fields });
+        return json({ ok: true });
+      } catch (e) { return json({ error: e.message }, 500); }
+    });
+    return;
+  }
+
   // ── GET /sync → fuerza resync SharePoint → SQLite ───────────────────────
   if (req.method === 'GET' && url === '/sync') {
     try {
@@ -3425,7 +3617,13 @@ Responde en español, de forma concisa y práctica. Señala alertas de sobrecons
 servidor.listen(PORT, '127.0.0.1', () => {
   console.log(`\n✓ App de cotizaciones corriendo en http://localhost:${PORT}`);
   console.log('  Abre esa URL en tu navegador para cargar cotizaciones.\n');
-  // Iniciar sincronización SQLite en segundo plano (no bloquea el arranque)
+  // Sincronización SharePoint → SQLite en segundo plano
   syncService.init(ctxSharePoint)
     .catch(e => console.warn('[syncService] No se pudo inicializar:', e.message));
+  // Crear admin inicial si la base de usuarios está vacía
+  bootstrapAdmin()
+    .catch(e => console.warn('[bootstrap]', e.message));
+  // Limpiar sesiones expiradas cada hora
+  const _sesionTimer = setInterval(() => localDb.cleanExpiredSesiones(), 60 * 60 * 1000);
+  if (_sesionTimer.unref) _sesionTimer.unref();
 });

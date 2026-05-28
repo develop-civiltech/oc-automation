@@ -126,6 +126,29 @@ function _crearEsquema(d) {
       last_sync  TEXT NOT NULL DEFAULT '',
       item_count INTEGER NOT NULL DEFAULT 0
     );
+
+    -- ── Usuarios ERP (caché de lista SharePoint UsuariosERP) ─────────────────
+    CREATE TABLE IF NOT EXISTS usuarios (
+      sp_id      TEXT PRIMARY KEY,
+      email      TEXT NOT NULL,
+      nombre     TEXT NOT NULL DEFAULT '',
+      cargo      TEXT NOT NULL DEFAULT '',
+      rol        TEXT NOT NULL DEFAULT 'operador',
+      activo     INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email);
+
+    -- ── Sesiones (solo local, nunca va a SharePoint) ─────────────────────────
+    CREATE TABLE IF NOT EXISTS sesiones (
+      id         TEXT PRIMARY KEY,
+      email      TEXT NOT NULL,
+      nombre     TEXT NOT NULL DEFAULT '',
+      rol        TEXT NOT NULL DEFAULT 'operador',
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sesiones_expires ON sesiones(expires_at);
   `);
 }
 
@@ -172,6 +195,13 @@ const UPSERT_DOC = (tabla) => `
   INSERT INTO ${tabla} (sp_id,data,updated_at)
   VALUES (@sp_id,@data,@updated_at)
   ON CONFLICT(sp_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`;
+
+const UPSERT_USR = `
+  INSERT INTO usuarios (sp_id,email,nombre,cargo,rol,activo,updated_at)
+  VALUES (@sp_id,@email,@nombre,@cargo,@rol,@activo,@updated_at)
+  ON CONFLICT(sp_id) DO UPDATE SET
+    email=excluded.email,nombre=excluded.nombre,cargo=excluded.cargo,
+    rol=excluded.rol,activo=excluded.activo,updated_at=excluded.updated_at`;
 
 // ── Escritura masiva (bulk upsert dentro de una transacción) ──────────────────
 
@@ -493,6 +523,74 @@ function upsertHistorialFila(fila) {
   bulkUpsertHistorial([fila]);
 }
 
+// ── Usuarios ──────────────────────────────────────────────────────────────────
+
+function upsertUsuario(item) {
+  db().prepare(UPSERT_USR).run({
+    sp_id:      String(item.sp_id || item.id || ''),
+    email:      String(item.email || '').toLowerCase().trim(),
+    nombre:     String(item.nombre || '').trim(),
+    cargo:      String(item.cargo  || '').trim(),
+    rol:        String(item.rol    || 'operador'),
+    activo:     (item.activo === true || item.activo === 1) ? 1 : 0,
+    updated_at: String(item.updated_at || item.Modified || new Date().toISOString()),
+  });
+}
+
+function bulkUpsertUsuarios(rows) {
+  const stmt = db().prepare(UPSERT_USR);
+  const tx   = db().transaction((items) => {
+    for (const f of items) {
+      stmt.run({
+        sp_id:      String(f.id || f.sp_id || ''),
+        email:      String(f.email || '').toLowerCase().trim(),
+        nombre:     String(f.nombre || '').trim(),
+        cargo:      String(f.cargo  || '').trim(),
+        rol:        String(f.rol    || 'operador'),
+        activo:     (f.activo === true || f.activo === 1) ? 1 : 0,
+        updated_at: String(f.updated_at || f.Modified || new Date().toISOString()),
+      });
+    }
+  });
+  tx(rows);
+}
+
+function countUsuarios() {
+  return db().prepare('SELECT COUNT(*) AS n FROM usuarios').get().n;
+}
+
+function getUsuarios() {
+  return db().prepare('SELECT * FROM usuarios ORDER BY activo DESC, nombre').all();
+}
+
+function getUsuarioByEmail(email) {
+  return db().prepare('SELECT * FROM usuarios WHERE email=? COLLATE NOCASE').get(
+    String(email || '').toLowerCase()
+  ) || null;
+}
+
+// ── Sesiones ──────────────────────────────────────────────────────────────────
+
+function upsertSesion({ id, email, nombre, rol, expires_at }) {
+  db().prepare(`
+    INSERT INTO sesiones (id,email,nombre,rol,expires_at,created_at)
+    VALUES (@id,@email,@nombre,@rol,@expires_at,@created_at)
+    ON CONFLICT(id) DO UPDATE SET expires_at=excluded.expires_at
+  `).run({ id, email, nombre, rol, expires_at, created_at: new Date().toISOString() });
+}
+
+function getSesion(id) {
+  return db().prepare('SELECT * FROM sesiones WHERE id=?').get(id) || null;
+}
+
+function deleteSesion(id) {
+  db().prepare('DELETE FROM sesiones WHERE id=?').run(id);
+}
+
+function cleanExpiredSesiones() {
+  db().prepare('DELETE FROM sesiones WHERE expires_at<?').run(new Date().toISOString());
+}
+
 // ── Conteo ────────────────────────────────────────────────────────────────────
 
 function counts() {
@@ -541,6 +639,15 @@ module.exports = {
   upsertProveedor,
   upsertDocumento,
   upsertHistorialFila,
+  upsertUsuario,
+  bulkUpsertUsuarios,
+  countUsuarios,
+  getUsuarios,
+  getUsuarioByEmail,
+  upsertSesion,
+  getSesion,
+  deleteSesion,
+  cleanExpiredSesiones,
   counts,
   isReady,
   norm,
