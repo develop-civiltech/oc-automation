@@ -710,22 +710,24 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
         <div class="desc">Historial de órdenes de servicio emitidas.</div>
       </div>
       <div class="tools">
+        <span class="tag tag-aprobada" id="os-stats-aprobadas">0 Aprobadas</span>
+        <span class="tag tag-borrador" id="os-stats-borrador">0 Borradores</span>
         <button class="btn btn-ghost btn-sm" onclick="descargarRegistroOSs()" title="Descargar registro filtrado en Excel">⤓ Descargar Excel</button>
       </div>
     </div>
 
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-      <select id="filtro-os-proyecto" class="td-input" style="width:200px;border:1px solid var(--border);padding:7px 10px" onchange="filtrarOrdenesServicio()">
-        <option value="">Todos los proyectos</option>
-      </select>
-      <select id="filtro-os-estado" class="td-input" style="width:160px;border:1px solid var(--border);padding:7px 10px" onchange="filtrarOrdenesServicio()">
+    <div class="filter-bar">
+      <input type="text" id="filtro-os-q" placeholder="Buscar por número OS, proyecto o proveedor..." oninput="filtrarOrdenesServicio()">
+      <select id="filtro-os-estado" onchange="filtrarOrdenesServicio()">
         <option value="">Todos los estados</option>
         <option value="borrador">Borrador</option>
         <option value="aprobada">Aprobada</option>
         <option value="anulada">Anulada</option>
         <option value="finalizada">Finalizada</option>
       </select>
-      <input type="text" id="filtro-os-q" placeholder="Buscar…" style="width:200px;border:1px solid var(--border);border-radius:4px;padding:7px 10px;background:var(--surface);color:var(--txt);font-size:12px" oninput="filtrarOrdenesServicio()">
+      <select id="filtro-os-proyecto" onchange="filtrarOrdenesServicio()">
+        <option value="">Todos los proyectos</option>
+      </select>
     </div>
 
     <div class="tabla-wrap">
@@ -1464,6 +1466,12 @@ function renderOrdenesServicio() {
     (o.proyecto || '').toLowerCase().includes(q) ||
     (o.proveedorNombre || '').toLowerCase().includes(q) ||
     (o.tipoServicio || '').toLowerCase().includes(q));
+
+  lista.sort((a, b) => (a.estado === 'anulada' ? 1 : 0) - (b.estado === 'anulada' ? 1 : 0));
+
+  const osBase = proy ? _ordenesServicio.filter(o => o.proyecto === proy) : _ordenesServicio;
+  if ($('#os-stats-aprobadas')) $('#os-stats-aprobadas').textContent = `${osBase.filter(o => o.estado === 'aprobada').length} Aprobadas`;
+  if ($('#os-stats-borrador'))  $('#os-stats-borrador').textContent  = `${osBase.filter(o => o.estado === 'borrador').length} Borradores`;
 
   if (!lista.length) {
     tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--txt-2);padding:32px">No hay órdenes de servicio${estado ? ' en estado "' + estado + '"' : ''}.</td></tr>`;
@@ -3243,8 +3251,11 @@ function renderOrdenes(){
     (o.proyecto || '').toLowerCase().includes(q) ||
     (o.proveedorNombre || '').toLowerCase().includes(q));
 
-  $('#oc-stats-aprobadas').textContent = `${ESTADO.ordenes.filter(o => o.estado === 'aprobada').length} Aprobadas`;
-  $('#oc-stats-borrador').textContent  = `${ESTADO.ordenes.filter(o => o.estado === 'borrador').length} Borradores`;
+  filtradas.sort((a, b) => (a.estado === 'anulada' ? 1 : 0) - (b.estado === 'anulada' ? 1 : 0));
+
+  const ocBase = proy ? ESTADO.ordenes.filter(o => o.proyecto === proy) : ESTADO.ordenes;
+  $('#oc-stats-aprobadas').textContent = `${ocBase.filter(o => o.estado === 'aprobada').length} Aprobadas`;
+  $('#oc-stats-borrador').textContent  = `${ocBase.filter(o => o.estado === 'borrador').length} Borradores`;
 
   if (!filtradas.length){
     cont.innerHTML = `
