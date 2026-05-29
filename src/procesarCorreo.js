@@ -16,6 +16,7 @@ const { parsearAsunto, resolverProyecto } = require('./parsearAsunto');
 const { leerRequerimiento }          = require('./leerRequerimiento');
 const { leerRequerimientoPDF }       = require('./leerRequerimientoPDF');
 const { consultarProveedor, cargarDatos } = require('./consultaProveedor');
+const localDb                            = require('./db');
 
 async function leerRequerimientoAuto(rutaArchivo) {
   const ext = path.extname(rutaArchivo).toLowerCase();
@@ -84,8 +85,18 @@ Sistema de Gestión de Compras – Civiltech`,
   }
 
   // 3. Resolver proyecto: prioridad asunto > Excel
-  const { proyPorCodigo } = cargarDatos();
-  // Enriquecer con proyectos de SharePoint (SQLite) para evitar falsos "no encontrado"
+  // proyPorCodigo se construye desde SQLite; fallback a CSV solo si SQLite está vacío
+  const proyPorCodigo = {};
+  const proyectosSQLite = localDb.getProyectos({ soloActivos: false });
+  if (proyectosSQLite.length > 0) {
+    for (const p of proyectosSQLite) {
+      const key = String(p.nombre || '').trim().toUpperCase();
+      if (key) proyPorCodigo[key] = { zona: p.zona || '' };
+    }
+  } else {
+    Object.assign(proyPorCodigo, cargarDatos().proyPorCodigo);
+  }
+  // Añadir proyectos externos pasados explícitamente (carga manual)
   for (const p of (opts.proyectosExternos || [])) {
     const key = String(p.codigo || p).trim().toUpperCase();
     if (key && !proyPorCodigo[key]) proyPorCodigo[key] = { zona: p.zona || '' };
@@ -104,9 +115,15 @@ Sistema de Gestión de Compras – Civiltech`,
     || requerimiento.cabecera.proyecto
     || infoAsunto.proyecto;
 
-  // 4. Consultar proveedor/precio por ítem
+  // 4. Consultar proveedor/precio por ítem (historial y proveedores desde SQLite)
+  const historialSP   = localDb.getHistorialPrecios();
+  const proveedoresSP = localDb.getProveedores();
   const itemsConsultados = requerimiento.items.map(item => {
-    const consulta = consultarProveedor(item.insumo, codigoFinal);
+    const consulta = consultarProveedor(item.insumo, codigoFinal, {
+      historialSP,
+      proveedoresSP,
+      zonaProyecto: proyectoFinal?.zona || '',
+    });
     return { ...item, consulta };
   });
 
