@@ -8,7 +8,7 @@ Consola web de gestión de requerimientos, órdenes de compra y órdenes de serv
 
 | Módulo | Función |
 |--------|---------|
-| **1.1 Requerimientos** | Visualiza solicitudes de compra recibidas por correo. Genera comparativa de proveedores y emite OC(s) en borrador. Bloquea emisión si el proveedor no está registrado. |
+| **1.1 Requerimientos** | Visualiza solicitudes de compra recibidas por correo o cargadas manualmente. Consecutivo automático y atómico por proyecto. Comparativa de proveedores. Genera OC(s) en borrador. Bloquea emisión si el proveedor no está registrado. |
 | **1.2 Generar OC** | Genera órdenes de compra desde una cotización (PDF, Excel, imagen). IA extrae ítems y precios. Autocomplete NIT ↔ Proveedor en tabla de ítems. Bloquea emisión si algún proveedor no está registrado. |
 | **1.3 Registro OCs** | Historial de órdenes de compra con búsqueda, filtros (Aprobadas excluye entregadas), aprobación, pago y entrega. |
 | **1.4 Órdenes de Servicio** | Crea nuevas órdenes de servicio con asistencia de IA para generar el clausulado. |
@@ -25,23 +25,25 @@ Correos (Outlook / abastecimiento@civiltechic.com)
          ▼
    index.js (procesamiento automático)
          │
-         ├─ leerCorreos.js       ← Lectura de buzón vía Microsoft Graph API
-         ├─ leerRequerimiento.js ← Extracción de requerimientos desde Excel adjunto
-         ├─ leerRequerimientoPDF.js ← Extracción desde PDF/imagen con Gemini AI
-         └─ requerimientos.js    ← Escritura a lista SharePoint "Requerimientos"
+         ├─ leerCorreos.js          ← Lectura de buzón vía Microsoft Graph API
+         ├─ leerRequerimiento.js    ← Extracción desde Excel adjunto
+         ├─ leerRequerimientoPDF.js ← Extracción desde PDF/imagen (Gemini AI)
+         └─ requerimientos.js       ← Escritura a lista SharePoint "Requerimientos"
 
 Consola web (http://localhost:3001)
          │
          ▼
    servidor-cotizaciones.js
          │
-         ├─ graphStorage.js      ← Wrapper Microsoft Graph API (SharePoint)
-         ├─ ocTemplate.js        ← Generación de documentos OC (HTML + Excel)
-         ├─ osTemplate.js        ← Generación de documentos OS (HTML + Excel)
-         ├─ remisionTemplate.js  ← Generación de remisiones
-         ├─ contador.js          ← Numeración consecutiva OC / OS
-         ├─ configApp.js         ← Configuración de la aplicación
-         └─ Gemini API           ← Extracción de ítems desde cotizaciones
+         ├─ graphStorage.js         ← Wrapper Microsoft Graph API (SharePoint)
+         ├─ db.js                   ← Caché SQLite (lectura rápida sin red)
+         ├─ syncService.js          ← Sincronización SharePoint → SQLite (c/2 min)
+         ├─ ocTemplate.js           ← Generación de documentos OC (HTML + Excel)
+         ├─ osTemplate.js           ← Generación de documentos OS (HTML + Excel)
+         ├─ remisionTemplate.js     ← Generación de remisiones
+         ├─ contador.js             ← Numeración consecutiva OC / OS
+         ├─ configApp.js            ← Configuración de la aplicación
+         └─ Gemini API              ← Extracción de ítems desde cotizaciones
 ```
 
 **Base de datos dual:**
@@ -51,18 +53,65 @@ Consola web (http://localhost:3001)
 
 > Cada escritura a SharePoint actualiza también SQLite de forma inmediata para que la UI refleje los cambios sin esperar el ciclo de sincronización.
 
-| Lista SharePoint | SQLite | Contenido |
-|-----------------|--------|-----------|
-| `HistorialPrecios` | — | Precios pagados por OC y cotización (Buscador de Precios) |
+| Lista SharePoint | Tabla SQLite | Contenido |
+|-----------------|-------------|-----------|
+| `HistorialPrecios` | `historial_precios` | Precios pagados por OC y cotización (Buscador de Precios) |
 | `Proveedores` | `proveedores` | Catálogo activo de proveedores con NIT, nombre, zona, municipio |
-| `Insumos` | — | Catálogo maestro de insumos |
-| `Proyectos` | — | Proyectos activos y su zona |
+| `Insumos` | `insumos` | Catálogo maestro de insumos |
+| `Proyectos` | `proyectos` | Proyectos activos y su zona |
 | `OrdenesCompra` | `ordenes_compra` | Órdenes de compra emitidas |
 | `OrdenesServicio` | `ordenes_servicio` | Órdenes de servicio emitidas |
 | `Requerimientos` | `requerimientos` | Solicitudes de compra procesadas |
 | `Remisiones` | `remisiones` | Remisiones generadas |
+| `UsuariosERP` | `usuarios` | Usuarios con acceso al ERP y sus roles |
+| *(local)* | `consecutivos_proyecto` | Contador atómico de consecutivos por proyecto |
+| *(local)* | `sesiones` | Sesiones activas (solo local, nunca va a SharePoint) |
 
 > **Campo NIT en SharePoint:** la lista `Proveedores` usa el campo `razonSocial` para el nombre legal. La columna `nombre` es la representación local en SQLite.
+
+---
+
+## Autenticación y Seguridad
+
+### Módulo de Autenticación (Microsoft OAuth 2.0)
+
+A partir de mayo 2026, el ERP implementa **autenticación centralizada con Microsoft 365**:
+
+- **Flujo OAuth 2.0**: Los usuarios inician sesión con su cuenta corporativa Microsoft (correo de Civiltech).
+- **Aprobación de usuarios**: Solo usuarios registrados y aprobados por un administrador pueden acceder.
+- **Almacenamiento dual**: Registro en SharePoint (fuente de verdad) + SQLite (caché local para velocidad).
+- **Sesiones seguras**: Cookies HttpOnly, SameSite=Lax, TTL de 8 horas con renovación automática.
+- **Auditoría**: Registro de login, logout y cambios de permisos en SharePoint.
+
+**Usuario administrador por defecto**: El correo configurado en `.env` como `USUARIO_EMAIL` se registra automáticamente como admin la primera vez que el servidor arranca.
+
+### Gestión de Usuarios
+
+Acceder a **Configuración ERP → Usuarios** (solo para administradores):
+
+- **Aprobar usuario**: Usuario nuevo intenta login, aparece en lista como "pendiente" → admin lo aprueba.
+- **Cambiar rol**: Asignar rol `admin`, `operador` u otro.
+- **Desactivar usuario**: Un usuario activo puede ser desactivado (revoca acceso inmediato).
+
+---
+
+## Características destacadas
+
+### Consecutivo automático por proyecto
+Cada requerimiento recibe un consecutivo oficial asignado atómicamente por el sistema (`consecutivoSistema`), diferente al número que el usuario escribe en el formulario de solicitud. El contador vive en SQLite (`consecutivos_proyecto`) y es independiente por proyecto, garantizando unicidad incluso con múltiples usuarios simultáneos.
+
+### Marca de agua en borradores
+Los documentos OC y OS en estado *borrador* muestran una marca de agua diagonal "NO APROBADO" al imprimir o exportar a PDF, eliminada automáticamente al aprobar el documento.
+
+### Detección automática de proyecto
+Al cargar un requerimiento manual sin seleccionar proyecto, el sistema lo detecta del documento: para Excel lo extrae del encabezado (sin IA, lectura síncrona) y para PDF lo extrae del procesamiento con Gemini AI. El proyecto detectado se muestra en el mensaje de confirmación.
+
+### Formatos de exportación de requerimiento
+El botón "Exportar selección" en la vista de requerimiento permite elegir entre:
+- **Detallado**: tabla completa con columnas Solicit., Cubierta, Pendiente, Unidad, Necesidad, Posible proveedor y Estado.
+- **Resumido**: tabla compacta con solo #, Insumo, Solicit., Pendiente y Unidad.
+
+Ambos formatos generan un documento HTML listo para imprimir con botones flotantes "Imprimir / Guardar PDF" y "Cerrar" (igual que el template de OC).
 
 ---
 
@@ -73,8 +122,10 @@ Consola web (http://localhost:3001)
 | Node.js | 18 LTS o superior | https://nodejs.org |
 | Python | 3.10 o superior | https://www.python.org/downloads/ |
 | openpyxl (Python) | cualquiera | `pip install openpyxl` |
+| Tailscale (opcional) | latest | https://tailscale.com/download |
 
 > Durante la instalación de Python marcar **"Add Python to PATH"**.
+> Tailscale es necesario solo si se requiere acceso público desde redes externas.
 
 ---
 
@@ -100,7 +151,7 @@ Copiar `.env.example` a `.env` y completar los valores. Las credenciales corpora
 solo es necesario actualizar los campos personales:
 
 ```env
-# ── Rutas a las bases de datos (fallback CSV) ─────────────────────────────────
+# ── Rutas a las bases de datos (fallback CSV — usar solo si SQLite está vacío) ──
 PATH_COMPRAS=./data/compras.csv
 PATH_PROVEEDORES=./data/proveedores_depurados_final.csv
 PATH_PROYECTOS=./data/tabla_proyectos.csv
@@ -118,9 +169,16 @@ SHAREPOINT_SITE_PATH=/sites/NombreSitio
 MAILBOX=abastecimiento@civiltechic.com
 
 # ── Identificación del usuario (firma de documentos y auditoría) ──────────────
-USUARIO_EMAIL=correo@civiltechic.com        # ← PERSONALIZAR
+USUARIO_EMAIL=correo@civiltechic.com        # ← PERSONALIZAR (será admin la primera vez)
 USUARIO_NOMBRE=Nombre Apellido              # ← PERSONALIZAR
 USUARIO_CARGO=Cargo del firmante            # ← PERSONALIZAR
+
+# ── Autenticación OAuth 2.0 ──────────────────────────────────────────────────
+# Para desarrollo local:
+AUTH_REDIRECT_URI=http://localhost:3001/auth/callback
+
+# Para acceso público con Tailscale Funnel (ver sección "Acceso Público"):
+# AUTH_REDIRECT_URI=https://[HOSTNAME].[TAILNET].ts.net/auth/callback
 
 # ── IA (extracción de cotizaciones) ──────────────────────────────────────────
 GEMINI_API_KEY=<api-key>
@@ -136,6 +194,10 @@ PUERTO_COTIZACIONES=3001
 
 # ── Procesamiento automático de correos ───────────────────────────────────────
 POLLING_INTERVAL_MIN=5
+
+# ── SQLite (caché local) ──────────────────────────────────────────────────────
+SQLITE_PATH=./data/local.db
+SYNC_INTERVAL_MIN=2
 
 # ── Python (solo si no está en PATH) ─────────────────────────────────────────
 # PYTHON_PATH=C:\Python313\python.exe
@@ -159,10 +221,42 @@ Abrir el navegador en **http://localhost:3001**
 
 > La ventana CMD debe permanecer abierta mientras se use la consola.
 
+### Acceso desde otros equipos / redes externas (con Tailscale)
+
+Si se requiere acceder al ERP desde otro equipo o red externa:
+
+1. **Instalar Tailscale** en el equipo servidor:
+   - Descargar desde https://tailscale.com/download/windows
+   - Instalar y iniciar sesión con cuenta Microsoft
+
+2. **Habilitar Funnel** (en PowerShell como Administrador):
+   ```
+   tailscale funnel 3001
+   ```
+
+3. **Obtener URL pública**:
+   ```
+   tailscale status
+   ```
+   Anotar la URL del equipo: `https://[HOSTNAME].[TAILNET].ts.net`
+
+4. **Actualizar .env**:
+   ```env
+   AUTH_REDIRECT_URI=https://[HOSTNAME].[TAILNET].ts.net/auth/callback
+   ```
+
+5. **Registrar en Azure AD**:
+   - Portal Azure → App registration (`oc-automation`) → Autenticación
+   - Add Redirect URI: `https://[HOSTNAME].[TAILNET].ts.net/auth/callback`
+
+6. **Reiniciar servidor** (`iniciar-erp.bat`)
+
+**Nota**: La URL es permanente — no cambia al reiniciar el servidor. Solo cambiaría si el hostname del equipo cambia.
+
 ### Procesamiento automático de correos
 
 ```bash
-# Ejecutar una vez (para Tarea Programada de Windows)
+# Ejecutar una sola vez (para Tarea Programada de Windows)
 node index.js
 
 # Polling continuo cada N minutos
@@ -210,8 +304,9 @@ oc-automation/
 ├── INSTALACION.md                    ← Guía de instalación detallada
 │
 ├── src/
-│   ├── servidor-cotizaciones.js      ← Servidor web principal (puerto 3001) + API REST
-│   ├── db.js                         ← Caché SQLite local (lectura rápida + escritura inmediata)
+│   ├── servidor-cotizaciones.js      ← Servidor web principal (puerto 3001) + API REST + auth middleware
+│   ├── authService.js                ← Autenticación Microsoft OAuth 2.0 + sesiones
+│   ├── db.js                         ← Caché SQLite local + tablas de usuarios y sesiones
 │   ├── syncService.js                ← Sincronización SharePoint → SQLite (cada 2 min)
 │   ├── leerCorreos.js                ← Lectura de correos vía Microsoft Graph
 │   ├── procesarCorreo.js             ← Orquestador de procesamiento de correos
@@ -223,7 +318,7 @@ oc-automation/
 │   ├── remisionTemplate.js           ← Plantilla de remisión
 │   ├── generarOC.py                  ← Generación de OC en Excel con openpyxl
 │   ├── graphStorage.js               ← Wrapper Microsoft Graph API
-│   ├── consultaProveedor.js          ← Búsqueda de proveedor óptimo
+│   ├── consultaProveedor.js          ← Búsqueda de proveedor óptimo (historial + zona)
 │   ├── controlCostos.js              ← Lista de control de costos
 │   ├── configApp.js                  ← Configuración persistente de la app
 │   ├── contador.js                   ← Numeración consecutiva OC / OS
@@ -242,9 +337,10 @@ oc-automation/
 │   └── consola.html                  ← Interfaz web (SPA)
 │
 └── data/
-    ├── compras.csv                   ← Historial de compras (fallback CSV)
-    ├── proveedores_depurados_final.csv ← Catálogo de proveedores (fallback)
-    ├── tabla_proyectos.csv           ← Lista de proyectos (fallback)
+    ├── local.db                      ← SQLite caché (generado automáticamente)
+    ├── compras.csv                   ← Fallback CSV historial precios (solo si SQLite vacío)
+    ├── proveedores_depurados_final.csv ← Fallback CSV proveedores (solo si SQLite vacío)
+    ├── tabla_proyectos.csv           ← Fallback CSV proyectos (solo si SQLite vacío)
     ├── plantilla_oc.xlsx             ← Plantilla Excel para OCs
     └── CT-ADMIN-FO-002_...xlsx       ← Formato de solicitud de requerimiento
 ```
@@ -257,11 +353,17 @@ oc-automation/
 |----------|---------------|----------|
 | "Puerto 3001 en uso" | Otro proceso usa el puerto | Cambiar `PUERTO_COTIZACIONES=3002` en `.env` |
 | "Error de autenticación" | CLIENT_SECRET expirado | Solicitar al administrador el nuevo valor |
+| "AADSTS500113" (login falla) | AUTH_REDIRECT_URI no registrada en Azure AD | Registrar la URL en Azure portal → App → Autenticación |
+| "Pantalla de login infinita" | Usuario no aprobado aún | Administrador debe aprobar usuario en Configuración |
+| "Sesión expirada" | Cookie expiró después de 8h | Hacer logout y login de nuevo |
 | "Python no encontrado" | Python no está en PATH | Agregar `PYTHON_PATH=ruta\python.exe` en `.env` |
 | La página no carga | Consola CMD cerrada | Volver a ejecutar `iniciar-erp.bat` |
 | Los datos no aparecen | Sin conexión a internet | Verificar conectividad — datos en SharePoint |
-| Buscador de Precios vacío | Lista `HistorialPrecios` vacía | Verificar conexión SP o ejecutar migración |
+| Buscador de Precios vacío | Lista `HistorialPrecios` vacía en SQLite | Esperar sync (2 min) o forzar con `GET /sync` |
 | Precios sugeridos desactualizados | Cache activo (60 seg) | Esperar 1 min y recargar, o reiniciar consola |
+| Proyectos no aparecen en desplegable | SQLite desincronizado | Forzar sincronización con `GET /sync` |
+| Tailscale Funnel no funciona | Tailscale servicio no activo | Instalar Tailscale o reiniciar el servicio |
+| URL de Tailscale cambia | Hostname cambió | Actualizar Azure AD y .env con nueva URL |
 
 ---
 
@@ -269,6 +371,7 @@ oc-automation/
 
 - **Tarea programada**: instalar solo en el equipo central. Los demás equipos únicamente abren la consola web.
 - **Scripts de migración** (`src/scripts/`): se ejecutaron una vez para poblar SharePoint. No ejecutar en equipos adicionales.
+- **Archivos CSV en `data/`**: son fallback de último recurso. En operación normal, todos los datos vienen de SQLite (sincronizado desde SharePoint). Mantenerlos como respaldo pero no como fuente principal.
 - **Desinstalación**: eliminar la carpeta del software. No instala nada en el sistema operativo más allá de su carpeta propia.
 
 ---

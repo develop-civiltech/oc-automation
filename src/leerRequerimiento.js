@@ -72,17 +72,17 @@ function leerRequerimiento(rutaExcel) {
     }
   }
 
-  // Leer ítems (hasta 16 filas)
+  // Leer ítems: parar cuando la columna insumo (C) esté vacía
   const items = [];
-  for (let fila = filaInicio; fila <= filaInicio + 15; fila++) {
+  for (let fila = filaInicio; ; fila++) {
     const insumo = get(`C${fila}`);
-    if (!insumo || insumo.toUpperCase() === 'INSUMO') continue;
+    if (!insumo || insumo.toUpperCase() === 'INSUMO') break;
 
     const cantRaw  = get(`H${fila}`);
     const cantidad = isNaN(parseFloat(cantRaw)) ? 1 : parseFloat(cantRaw);
     const unidad   = get(`I${fila}`);
 
-    if (!insumo) continue;
+    if (!insumo) break;
 
     items.push({
       item:             get(`B${fila}`) || String(items.length + 1),

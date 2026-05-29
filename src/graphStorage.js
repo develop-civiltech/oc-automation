@@ -144,9 +144,10 @@ async function getListItems(siteId, listId, opts = {}) {
   if (opts.select)  params.set('$select',  opts.select);
 
   let url    = `/sites/${siteId}/lists/${listId}/items?${params.toString()}`;
+  const reqOpts = opts.prefer ? { extraHeaders: { Prefer: opts.prefer } } : undefined;
   const all  = [];
   while (url) {
-    const data = await get(url);
+    const data = await get(url, reqOpts);
     all.push(...(data.value || []));
     url = data['@odata.nextLink'] || null;
     if (url && url.startsWith(GRAPH)) url = url.substring(GRAPH.length);
@@ -216,6 +217,12 @@ async function uploadFileToSite(siteId, relativePath, buffer, contentType = 'app
   return res.json();
 }
 
+// ── Columnas de lista ─────────────────────────────────────────────────────────
+
+async function addListColumn(siteId, listId, columnDef) {
+  return post(`/sites/${siteId}/lists/${listId}/columns`, columnDef);
+}
+
 // ── Export ────────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -229,6 +236,8 @@ module.exports = {
   getLists, getListByName, createList, deleteList,
   // items
   getListItems, getListItem, addListItem, updateListItem, deleteListItem,
+  // columns
+  addListColumn,
   // drive / workbook
   getDriveItemByPath, ensureWorkbookSession, closeWorkbookSession,
   appendRowToTable, uploadFileToSite,

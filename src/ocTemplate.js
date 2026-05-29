@@ -142,6 +142,16 @@ function generarHTML(oc, cfg) {
   .no-print button{padding:8px 14px;border:none;border-radius:5px;font-size:12px;font-weight:500;cursor:pointer}
   .btn-pdf{background:var(--t);color:#fff}
   .btn-close{background:#e6e9ee;color:#1a2430}
+
+  .marca-agua{
+    position:fixed;top:50%;left:50%;
+    transform:translate(-50%,-50%) rotate(-45deg);
+    font-size:80px;font-weight:900;
+    color:rgba(160,20,20,0.13);
+    white-space:nowrap;pointer-events:none;user-select:none;
+    z-index:0;letter-spacing:10px;
+    font-family:'Segoe UI',Arial,sans-serif;
+  }
 </style>
 </head>
 <body>
@@ -150,6 +160,8 @@ function generarHTML(oc, cfg) {
   <button class="btn-pdf" onclick="window.print()">Imprimir / Guardar PDF</button>
   <button class="btn-close" onclick="window.close()">Cerrar</button>
 </div>
+
+${oc.estado === 'borrador' ? '<div class="marca-agua">NO APROBADO</div>' : ''}
 
 <div class="wrap">
   <div class="hdr">

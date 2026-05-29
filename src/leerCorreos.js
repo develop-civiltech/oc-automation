@@ -325,9 +325,10 @@ async function leerSolicitudesPendientes() {
 
   for (const msg of mensajes) {
     const item = {
-      asunto:    msg.subject,
-      messageId: msg.id,
-      remitente: msg.from?.emailAddress?.address || '',
+      asunto:          msg.subject,
+      messageId:       msg.id,
+      remitente:       msg.from?.emailAddress?.address || '',
+      remitenteNombre: msg.from?.emailAddress?.name    || '',
       rutaAdjunto:          null,
       respuestaAutomatica:  null,
     };
@@ -384,8 +385,30 @@ async function procesarBuzon(onSolicitud, onOCGenerada, onError) {
         }
 
         if (resultado.accion === 'GENERAR_OC') {
-          const archivos = await onOCGenerada(resultado);
-          console.log(`[leerCorreos] OC generada para "${sol.asunto}" → ${archivos.length} archivo(s)`);
+          const archivos = await onOCGenerada(resultado, { messageId: sol.messageId, remitente: sol.remitente });
+          console.log(`[leerCorreos] Requerimiento registrado para "${sol.asunto}" → ${archivos.length} item(s)`);
+
+          // Confirmar recepción al solicitante con el consecutivo de sistema asignado
+          const req = archivos?.[0];
+          if (req && !req.duplicado && req.consecutivoSistema) {
+            const proyecto = resultado.solicitud?.proyecto || '';
+            try {
+              await responderCorreo(
+                { id: sol.messageId },
+                `RE: ${sol.asunto} — Requerimiento Registrado`,
+                `Estimado(a) ${sol.remitenteNombre || 'Solicitante'},\n\n` +
+                `Su solicitud de requerimiento fue recibida y registrada en el ERP con los siguientes datos:\n\n` +
+                `  Número de requerimiento : ${req.consecutivoSistema}\n` +
+                `  Proyecto                : ${proyecto}\n` +
+                `  Ítems recibidos         : ${req.items}\n\n` +
+                `Este número es su referencia oficial para seguimiento ante el área de compras.\n\n` +
+                `Saludos,\nSistema de Gestión de Compras – Civiltech`,
+                null, null
+              );
+            } catch (errResp) {
+              console.error(`[leerCorreos] Error al enviar confirmación de recepción: ${errResp.message}`);
+            }
+          }
         }
 
         // Mover a procesados en cualquier caso (ignorar también se mueve)

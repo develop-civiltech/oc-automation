@@ -13,7 +13,8 @@
  *   bloquear(itemId, usuario, minutos = 15)                  → soft-lock
  */
 
-const g = require('./graphStorage');
+const g  = require('./graphStorage');
+const db = require('./db');
 
 const _cache = {}; // { siteId, listId }
 async function ctx() {
@@ -23,12 +24,16 @@ async function ctx() {
   if (!list) throw new Error('List "Requerimientos" no existe. Ejecuta crear-listas.js');
   _cache.siteId = site.id;
   _cache.listId = list.id;
+  // Migración no destructiva: agregar columna consecutivoSistema si no existe
+  try {
+    await g.addListColumn(site.id, list.id, { name: 'consecutivoSistema', text: {} });
+  } catch {}
   return _cache;
 }
 
 // ── Mapeo del resultado de procesarCorreo → fields del item ──────────────────
 
-function mapearFields(resultado, { messageId = '', adjuntoUrl = '' } = {}) {
+function mapearFields(resultado, { messageId = '', adjuntoUrl = '', consecutivoSistema = '' } = {}) {
   const s = resultado.solicitud || {};
   const items = (resultado.items || []).map(it => ({
     insumo:    it.insumo,
@@ -46,16 +51,17 @@ function mapearFields(resultado, { messageId = '', adjuntoUrl = '' } = {}) {
   }));
 
   return {
-    consecutivo:    s.consecutivo || '',
-    proyecto:       s.proyecto || '',
-    fechaSolicitud: s.fechaSolicitud ? fechaISO(s.fechaSolicitud) : new Date().toISOString(),
-    solicitante:    s.responsable || '',
-    estado:         'pendiente',
-    origenCorreoId: messageId,
-    adjuntoUrl:     adjuntoUrl,
-    itemsJson:      JSON.stringify(items),
-    notas:          (resultado.alertasGlobales || []).join(' | '),
-    ocsGeneradas:   '',
+    consecutivo:         s.consecutivo || '',
+    consecutivoSistema:  consecutivoSistema,
+    proyecto:            s.proyecto || '',
+    fechaSolicitud:      s.fechaSolicitud ? fechaISO(s.fechaSolicitud) : new Date().toISOString(),
+    solicitante:         s.responsable || '',
+    estado:              'pendiente',
+    origenCorreoId:      messageId,
+    adjuntoUrl:          adjuntoUrl,
+    itemsJson:           JSON.stringify(items),
+    notas:               (resultado.alertasGlobales || []).join(' | '),
+    ocsGeneradas:        '',
   };
 }
 
@@ -73,20 +79,29 @@ function fechaISO(f) {
 
 async function crearDesdeCorreo(resultado, meta = {}) {
   const { siteId, listId } = await ctx();
-  const fields = mapearFields(resultado, meta);
 
-  // Deduplicar: si ya existe un Requerimiento con el mismo consecutivo + proyecto,
-  // no crear otro (correos reenviados, retries, etc.).
-  if (fields.consecutivo) {
+  // Deduplicar por messageId — solo para correos reales (no cargas manuales).
+  // Los messageId manuales tienen formato "manual:..." y son siempre únicos
+  // (incluyen timestamp), por lo que no requieren consulta a SharePoint.
+  // Para correos reales, origenCorreoId no está indexado en SP → necesita Prefer header.
+  if (meta.messageId && !meta.messageId.startsWith('manual:')) {
     const existentes = await g.getListItems(siteId, listId, {
-      filter: `fields/consecutivo eq '${fields.consecutivo.replace(/'/g,"''")}'`,
+      filter: `fields/origenCorreoId eq '${meta.messageId.replace(/'/g, "''")}'`,
+      prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly',
     });
-    const dup = existentes.find(e => (e.fields || {}).proyecto === fields.proyecto);
-    if (dup) return { item: dup, duplicado: true };
+    if (existentes.length > 0) return { item: existentes[0], duplicado: true };
   }
 
+  // Consecutivo de sistema: atómico, por proyecto, sin importar el del correo
+  const proyecto = (resultado.solicitud || {}).proyecto || '';
+  const consecutivoSistema = proyecto
+    ? db.getNextConsecutivoProyecto(proyecto)
+    : '';
+
+  const fields = mapearFields(resultado, { ...meta, consecutivoSistema });
+
   const item = await g.addListItem(siteId, listId, fields);
-  return { item, duplicado: false };
+  return { item, duplicado: false, consecutivoSistema };
 }
 
 async function listar(filter) {

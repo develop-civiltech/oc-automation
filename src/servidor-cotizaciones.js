@@ -1845,11 +1845,28 @@ const servidor = http.createServer(async (req, res) => {
             const hoy  = new Date();
             fechaAsunto = `${hoy.getFullYear()}${String(hoy.getMonth()+1).padStart(2,'0')}${String(hoy.getDate()).padStart(2,'0')}`;
           }
+          // Si el usuario no escribió proyecto, intentar detectarlo del documento
+          let proyectoParaAsunto = proyectoManual;
+          let proyectoAutoDetectado = '';
+          if (!proyectoManual) {
+            if (['.xlsx', '.xls'].includes(ext)) {
+              try {
+                const { leerRequerimiento } = require('./leerRequerimiento');
+                const docData = leerRequerimiento(tmpPath);
+                proyectoParaAsunto = (docData.cabecera?.proyecto || '').trim();
+                proyectoAutoDetectado = proyectoParaAsunto;
+              } catch {}
+            }
+            // PDF: marcador especial; procesarCorreo.js usará cabecera.proyecto (Gemini)
+            if (!proyectoParaAsunto) proyectoParaAsunto = '__AUTO__';
+          }
+
           const asuntoSintetico =
-            `SOLICITUD REQUERIMIENTO ${consecutivoManual || '0000'} ${fechaAsunto} ${proyectoManual || 'SIN_PROYECTO'}`;
+            `SOLICITUD REQUERIMIENTO ${consecutivoManual || '0000'} ${fechaAsunto} ${proyectoParaAsunto}`;
 
           const { procesarCorreo } = require('./procesarCorreo');
-          const resultado = await procesarCorreo(asuntoSintetico, tmpPath);
+          const proyectosSP = await obtenerProyectosSP({ soloActivos: false }).catch(() => []);
+          const resultado = await procesarCorreo(asuntoSintetico, tmpPath, { proyectosExternos: proyectosSP });
 
           if (resultado.accion !== 'GENERAR_OC') {
             return json({
@@ -1863,7 +1880,7 @@ const servidor = http.createServer(async (req, res) => {
 
           // Guardar en SharePoint
           const requerimientos = require('./requerimientos');
-          const { item, duplicado } = await requerimientos.crearDesdeCorreo(resultado, {
+          const { item, duplicado, consecutivoSistema } = await requerimientos.crearDesdeCorreo(resultado, {
             messageId:  `manual:${process.env.USUARIO_EMAIL || 'sistema'}:${Date.now()}`,
             adjuntoUrl: '',
           });
@@ -1873,11 +1890,14 @@ const servidor = http.createServer(async (req, res) => {
             ok: true,
             duplicado,
             id: item.id,
-            consecutivo:     resultado.solicitud.consecutivo,
-            proyecto:        resultado.solicitud.proyecto,
-            items:           resultado.items.length,
-            itemsSinPrecio:  resultado.itemsSinPrecio,
-            alertasGlobales: resultado.alertasGlobales || [],
+            consecutivo:        resultado.solicitud.consecutivo,
+            consecutivoSistema: consecutivoSistema || '',
+            proyecto:           resultado.solicitud.proyecto,
+            proyectoDetectado:  proyectoAutoDetectado || resultado.solicitud.proyecto || '',
+            proyectoEsAuto:     !proyectoManual,
+            items:              resultado.items.length,
+            itemsSinPrecio:     resultado.itemsSinPrecio,
+            alertasGlobales:    resultado.alertasGlobales || [],
           });
         } finally {
           try { fs.unlinkSync(tmpPath); } catch {}
@@ -2040,10 +2060,17 @@ const servidor = http.createServer(async (req, res) => {
         if (estadoActual === 'anulado')   return json({ error: 'Ya está anulado' }, 400);
         if (estadoActual === 'gestionado') return json({ error: 'No se puede anular un requerimiento ya gestionado' }, 400);
         const notasPrev = reqItem.fields?.notas || '';
-        const usuario = process.env.USUARIO_EMAIL || 'sistema';
+        const usuario   = process.env.USUARIO_EMAIL || 'sistema';
+        const notasNuevas = (notasPrev ? notasPrev + ' | ' : '') +
+          `ANULADO por ${usuario} el ${new Date().toLocaleDateString('es-CO')}${motivo ? ` — ${motivo}` : ''}`;
         await g.updateListItem(ctx.siteId, ctx.Requerimientos, reqItem.id, {
           estado: 'anulado',
-          notas: (notasPrev ? notasPrev + ' | ' : '') + `ANULADO por ${usuario} el ${new Date().toLocaleDateString('es-CO')}${motivo ? ` — ${motivo}` : ''}`,
+          notas:  notasNuevas,
+        });
+        // Actualizar SQLite inmediatamente para que GET /requerimientos refleje el cambio
+        localDb.upsertDocumento('requerimientos', {
+          id:     reqItem.id,
+          fields: { ...reqItem.fields, estado: 'anulado', notas: notasNuevas },
         });
         return json({ ok: true });
       } catch (err) {

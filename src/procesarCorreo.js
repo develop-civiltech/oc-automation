@@ -59,7 +59,7 @@ Sistema de Gestión de Compras – Civiltech`,
 
 // ── Procesamiento con adjunto ─────────────────────────────────────────────────
 
-async function procesarConAdjunto(infoAsunto, rutaAdjunto) {
+async function procesarConAdjunto(infoAsunto, rutaAdjunto, opts = {}) {
   // 1. Leer requerimiento (Excel o PDF)
   let requerimiento;
   try {
@@ -85,14 +85,24 @@ Sistema de Gestión de Compras – Civiltech`,
 
   // 3. Resolver proyecto: prioridad asunto > Excel
   const { proyPorCodigo } = cargarDatos();
+  // Enriquecer con proyectos de SharePoint (SQLite) para evitar falsos "no encontrado"
+  for (const p of (opts.proyectosExternos || [])) {
+    const key = String(p.codigo || p).trim().toUpperCase();
+    if (key && !proyPorCodigo[key]) proyPorCodigo[key] = { zona: p.zona || '' };
+  }
   const proyectoAsunto = infoAsunto.valido
     ? resolverProyecto(infoAsunto.proyecto, proyPorCodigo)
     : null;
   const proyectoExcel  = resolverProyecto(requerimiento.cabecera.proyecto, proyPorCodigo);
   const proyectoFinal  = proyectoAsunto || proyectoExcel;
+  // Descartar marcadores sintéticos que nunca deben ganar al texto del documento
+  const asuntoProyecto = (infoAsunto.proyecto === '__AUTO__' || infoAsunto.proyecto === 'SIN_PROYECTO')
+    ? null
+    : infoAsunto.proyecto;
   const codigoFinal    = proyectoFinal?.codigo_proyecto
-    || infoAsunto.proyecto
-    || requerimiento.cabecera.proyecto;
+    || asuntoProyecto
+    || requerimiento.cabecera.proyecto
+    || infoAsunto.proyecto;
 
   // 4. Consultar proveedor/precio por ítem
   const itemsConsultados = requerimiento.items.map(item => {
@@ -136,7 +146,7 @@ Sistema de Gestión de Compras – Civiltech`,
  * @param {string|null} rutaAdjunto - Ruta al archivo Excel adjunto, o null si no hay
  * @returns {object}    Resultado con accion, datos de OC o instrucción de respuesta
  */
-async function procesarCorreo(asunto, rutaAdjunto) {
+async function procesarCorreo(asunto, rutaAdjunto, opts = {}) {
   const infoAsunto = parsearAsunto(asunto);
 
   // Correo sin formato válido en asunto — ignorar silenciosamente
@@ -154,7 +164,7 @@ async function procesarCorreo(asunto, rutaAdjunto) {
   }
 
   // Con adjunto → procesar
-  return procesarConAdjunto(infoAsunto, rutaAdjunto);
+  return procesarConAdjunto(infoAsunto, rutaAdjunto, opts);
 }
 
 module.exports = { procesarCorreo };

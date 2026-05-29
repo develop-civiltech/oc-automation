@@ -139,6 +139,13 @@ function _crearEsquema(d) {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email);
 
+    -- ── Consecutivos por proyecto (contador atómico de requerimientos) ──────────
+    CREATE TABLE IF NOT EXISTS consecutivos_proyecto (
+      proyecto           TEXT PRIMARY KEY,
+      ultimo_consecutivo INTEGER NOT NULL DEFAULT 0,
+      updated_at         TEXT NOT NULL DEFAULT ''
+    );
+
     -- ── Sesiones (solo local, nunca va a SharePoint) ─────────────────────────
     CREATE TABLE IF NOT EXISTS sesiones (
       id         TEXT PRIMARY KEY,
@@ -591,6 +598,26 @@ function cleanExpiredSesiones() {
   db().prepare('DELETE FROM sesiones WHERE expires_at<?').run(new Date().toISOString());
 }
 
+// ── Consecutivos por proyecto ─────────────────────────────────────────────────
+
+function getNextConsecutivoProyecto(proyecto) {
+  const d   = db();
+  const now = new Date().toISOString();
+  const run = d.transaction(() => {
+    d.prepare(
+      `INSERT OR IGNORE INTO consecutivos_proyecto (proyecto, ultimo_consecutivo, updated_at) VALUES (?, 0, ?)`
+    ).run(proyecto, now);
+    d.prepare(
+      `UPDATE consecutivos_proyecto SET ultimo_consecutivo = ultimo_consecutivo + 1, updated_at = ? WHERE proyecto = ?`
+    ).run(now, proyecto);
+    return d.prepare(
+      `SELECT ultimo_consecutivo FROM consecutivos_proyecto WHERE proyecto = ?`
+    ).get(proyecto).ultimo_consecutivo;
+  });
+  const n = run();
+  return String(n).padStart(4, '0');
+}
+
 // ── Conteo ────────────────────────────────────────────────────────────────────
 
 function counts() {
@@ -651,4 +678,5 @@ module.exports = {
   counts,
   isReady,
   norm,
+  getNextConsecutivoProyecto,
 };

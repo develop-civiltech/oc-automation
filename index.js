@@ -36,14 +36,20 @@ async function onOCGenerada(resultado, meta = {}) {
   // El resultado se registra como Requerimiento en SharePoint (estado 'pendiente')
   // para que el usuario lo gestione desde la consola.
   try {
-    const { item, duplicado } = await requerimientos.crearDesdeCorreo(resultado, meta);
+    const { item, duplicado, consecutivoSistema } = await requerimientos.crearDesdeCorreo(resultado, meta);
     if (duplicado) {
-      console.log(`  ⟳ Requerimiento ya existía (${resultado.solicitud?.consecutivo}) — omitido`);
+      console.log(`  ⟳ Requerimiento ya existía (messageId: ${meta.messageId}) — omitido`);
     } else {
-      console.log(`  ✓ Requerimiento creado (id: ${item.id}, cons: ${resultado.solicitud?.consecutivo}, ítems: ${resultado.items?.length || 0})`);
+      console.log(`  ✓ Requerimiento creado (id: ${item.id}, consecutivoSistema: ${consecutivoSistema}, ref. usuario: ${resultado.solicitud?.consecutivo}, ítems: ${resultado.items?.length || 0})`);
     }
     (resultado.alertasGlobales || []).forEach(a => console.log(`      ${a}`));
-    return [{ id: item.id, consecutivo: resultado.solicitud?.consecutivo, items: resultado.items?.length || 0 }];
+    return [{
+      id:                 item.id,
+      consecutivo:        resultado.solicitud?.consecutivo,
+      consecutivoSistema: consecutivoSistema || (item.fields || {}).consecutivoSistema || '',
+      items:              resultado.items?.length || 0,
+      duplicado,
+    }];
   } catch (e) {
     console.error('  ✗ No se pudo registrar Requerimiento:', e.message);
     throw e;
