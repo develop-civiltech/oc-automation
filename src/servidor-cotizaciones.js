@@ -2319,58 +2319,74 @@ const servidor = http.createServer(async (req, res) => {
         }
       }
 
+      // Leer OC de SQLite ANTES del PATCH para preservar itemsJson y requerimientoId
+      const ocLocalPre = accion === 'aprobar'
+        ? localDb.getOrdenesCompra().find(o => String(o.id) === String(itemId))
+        : null;
+
       const actualizado = await g.updateListItem(ctx.siteId, ctx.OrdenesCompra, itemId, cambios);
       if (actualizado?.id) localDb.upsertDocumento('ordenes_compra', actualizado);
 
-      // Si se aprueba por primera vez → registrar en Control Costos.xlsx
+      // Si se aprueba → ejecutar tareas secundarias en segundo plano (no bloquean la respuesta)
       if (accion === 'aprobar') {
-        try {
-          const oc = actualizado.fields || {};
-          await cc.registrarGasto({
-            fechaOC:          (oc.fechaCreacion || now).slice(0,10),
-            numeroOC:         oc.numeroOC,
-            proyecto:         oc.proyecto,
-            proveedorNit:     oc.proveedorNit,
-            proveedorNombre:  oc.proveedorNombre,
-            tipoGasto:        oc.tipoGasto || '',
-            subtotal:         oc.subtotal,
-            iva:              oc.iva,
-            total:            oc.total,
-            estado:           'aprobada',
-            fechaAprobacion:  now.slice(0,10),
-            creadoPor:        usuario,
-          });
-        } catch (e) { console.warn('No se pudo registrar en Control Costos:', e.message); }
-
-        // Registrar cada ítem en compras.csv para que los próximos comparativos
-        // vean el precio actualizado de este proveedor.
-        try {
-          const ocCompleto = await g.getListItem(ctx.siteId, ctx.OrdenesCompra, itemId);
-          const oc = ocCompleto?.fields || actualizado?.fields || {};
-          let itemsOC = [];
-          try { itemsOC = JSON.parse(oc.itemsJson || '[]'); } catch {}
-          const filasHist = itemsOC
-            .filter(it => Number(it.precioUnitario || it.precio || 0) > 0)
-            .map(it => {
-              const base = Number(it.precioUnitario || it.precio || 0);
-              const iva  = Number(it.ivaPct || 0);
-              const precioFinal = base * (1 + iva / 100);
-              return {
-                proyecto:        oc.proyecto || '',
-                numCotizacion:   oc.numeroOC || '',
-                nitProveedor:    oc.proveedorNit || '',
-                nombreProveedor: oc.proveedorNombre || '',
-                fechaVigencia:   new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }),
-                insumo:          it.descripcion || it.insumo || '',
-                cantidad:        Number(it.cantidad || 1),
-                precio:          precioFinal,
-              };
+        const oc = actualizado || {};
+        const itemsJson = ocLocalPre?.itemsJson || oc.itemsJson || '[]';
+        (async () => {
+          try {
+            await cc.registrarGasto({
+              fechaOC:         (oc.fechaCreacion || now).slice(0,10),
+              numeroOC:        oc.numeroOC,        proyecto:        oc.proyecto,
+              proveedorNit:    oc.proveedorNit,    proveedorNombre: oc.proveedorNombre,
+              tipoGasto:       oc.tipoGasto || '', subtotal:        oc.subtotal,
+              iva:             oc.iva,             total:           oc.total,
+              estado:          'aprobada',         fechaAprobacion: now.slice(0,10),
+              creadoPor:       usuario,
             });
-          if (filasHist.length) {
-            const n = await agregarFilasCompras(filasHist, ctx);
-            console.log(`[OC ${oc.numeroOC}] ${n} precios añadidos a HistorialPrecios SP`);
-          }
-        } catch (e) { console.warn('No se pudo actualizar histórico de precios:', e.message); }
+          } catch (e) { console.warn('No se pudo registrar en Control Costos:', e.message); }
+
+          try {
+            let itemsOC = [];
+            try { itemsOC = JSON.parse(itemsJson); } catch {}
+            const filasHist = itemsOC
+              .filter(it => Number(it.precioUnitario || it.precio || 0) > 0)
+              .map(it => {
+                const base = Number(it.precioUnitario || it.precio || 0);
+                const precioFinal = base * (1 + Number(it.ivaPct || 0) / 100);
+                return {
+                  proyecto:        oc.proyecto || '',
+                  numCotizacion:   oc.numeroOC || '',
+                  nitProveedor:    oc.proveedorNit || '',
+                  nombreProveedor: oc.proveedorNombre || '',
+                  fechaVigencia:   new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }),
+                  insumo:          it.descripcion || it.insumo || '',
+                  cantidad:        Number(it.cantidad || 1),
+                  precio:          precioFinal,
+                };
+              });
+            if (filasHist.length) {
+              const n = await agregarFilasCompras(filasHist, ctx);
+              console.log(`[OC ${oc.numeroOC}] ${n} precios añadidos a HistorialPrecios SP`);
+            }
+          } catch (e) { console.warn('No se pudo actualizar histórico de precios:', e.message); }
+
+          // Recalcular estado del requerimiento de origen (la aprobación no lo hacía)
+          try {
+            const reqId = oc.requerimientoId || ocLocalPre?.requerimientoId;
+            if (reqId && ctx.Requerimientos) {
+              const reqItem = await g.getListItem(ctx.siteId, ctx.Requerimientos, reqId);
+              const nuevoEstado = await calcularEstadoRequerimiento(ctx, reqItem);
+              const estadoPrev  = (reqItem.fields || {}).estado || 'pendiente';
+              if (nuevoEstado !== estadoPrev) {
+                await g.updateListItem(ctx.siteId, ctx.Requerimientos, reqId, { estado: nuevoEstado });
+                localDb.upsertDocumento('requerimientos', {
+                  id: reqId,
+                  fields: { ...(reqItem.fields || {}), estado: nuevoEstado },
+                });
+                console.log(`[OC ${oc.numeroOC}] Req ${reqId}: ${estadoPrev} → ${nuevoEstado}`);
+              }
+            }
+          } catch (e) { console.warn('No se pudo recalcular estado del requerimiento:', e.message); }
+        })();
       }
       // Si cambia estado de pago/entrega → actualizar fila en Control Costos (async)
       if (accion === 'pagar' || accion === 'entregar') {

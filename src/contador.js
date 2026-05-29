@@ -32,12 +32,16 @@ function formato(numero) {
 }
 
 async function siguienteNumeroSP(siteId, listOrdenesId) {
-  const items = await g.getListItems(siteId, listOrdenesId);
+  const localDb = require('./db');
+  // SQLite tiene todas las OCs sincronizadas; evita descargar toda la lista de SP
+  const sqlite = localDb.getOrdenesCompra();
+  const fuente = sqlite.length > 0
+    ? sqlite
+    : (await g.getListItems(siteId, listOrdenesId)).map(it => it.fields || {});
   let max = parseInt(process.env.CONTADOR_OC_INICIAL || '0', 10) - 1;
-  for (const it of items) {
-    const f = it.fields || {};
-    if (!ESTADOS_CONSUME_NUMERO.has(f.estado)) continue;
-    const n = extraerNumero(f.numeroOC);
+  for (const it of fuente) {
+    if (!ESTADOS_CONSUME_NUMERO.has(it.estado)) continue;
+    const n = extraerNumero(it.numeroOC);
     if (n != null && n > max) max = n;
   }
   return max + 1;
@@ -54,12 +58,15 @@ function formatoOS(numero) {
 }
 
 async function siguienteNumeroOS(siteId, listOrdenesServicioId) {
-  const items = await g.getListItems(siteId, listOrdenesServicioId);
+  const localDb = require('./db');
+  const sqlite = localDb.getOrdenesServicio();
+  const fuente = sqlite.length > 0
+    ? sqlite
+    : (await g.getListItems(siteId, listOrdenesServicioId)).map(it => it.fields || {});
   let max = parseInt(process.env.CONTADOR_OS_INICIAL || '0', 10) - 1;
-  for (const it of items) {
-    const f = it.fields || {};
-    if (!ESTADOS_CONSUME_NUMERO_OS.has(f.estado)) continue;
-    const n = extraerNumero(f.numeroOS);
+  for (const it of fuente) {
+    if (!ESTADOS_CONSUME_NUMERO_OS.has(it.estado)) continue;
+    const n = extraerNumero(it.numeroOS);
     if (n != null && n > max) max = n;
   }
   return max + 1;
