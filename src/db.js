@@ -250,7 +250,7 @@ async function bulkUpsertHistorialAsync(rows) {
           insumo:     String(f.insumo || '').trim(),
           insumoNorm: norm(f.insumo),
           proveedor:  String(f.nombreProveedor || f.proveedor || '').trim(),
-          nit:        String(f.nitProveedor    || f.nit       || '').trim(),
+          nit:        String(f.nitProveedor    || f.nit       || '').trim().replace(/\.0$/, ''),
           precio:     parseFloat(f.precioUnitario || f.precio || 0) || 0,
           fecha:      String(f.fecha || '').trim(),
           zona:       String(f.zona  || '').trim(),

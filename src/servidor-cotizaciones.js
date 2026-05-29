@@ -1545,7 +1545,7 @@ const servidor = http.createServer(async (req, res) => {
         // Agrupar historial por NIT (un renglón por proveedor con precio más reciente y mínimo)
         const porNit = {};
         (c.historial || []).forEach(h => {
-          const nit = (h.proveedor || '').match(/^(\d+)/)?.[1] || h.proveedor;
+          const nit = (h.nit || '').trim().replace(/\.0$/, '') || h.proveedor;
           if (!porNit[nit]) porNit[nit] = { nit, nombre: h.proveedor, precios: [] };
           porNit[nit].precios.push({ precio: h.precio, fecha: h.fecha, documento: h.compra, proyecto: h.proyecto });
         });
@@ -1662,7 +1662,7 @@ const servidor = http.createServer(async (req, res) => {
         const c = consultarProveedor(nombreHomologado, f.proyecto || '', { historialSP: historialSPr, proveedoresSP: proveedoresSPr, zonaProyecto: zonaProyRecons });
         const porNit = {};
         (c.historial || []).forEach(h => {
-          const nit = (h.proveedor || '').match(/^(\d+)/)?.[1] || h.proveedor;
+          const nit = (h.nit || '').trim().replace(/\.0$/, '') || h.proveedor;
           if (!porNit[nit]) porNit[nit] = { nit, nombre: h.proveedor, precios: [] };
           porNit[nit].precios.push({ precio: h.precio, fecha: h.fecha, documento: h.compra, proyecto: h.proyecto });
         });
@@ -1746,7 +1746,7 @@ const servidor = http.createServer(async (req, res) => {
         // Agrupar por proveedor → una OC por proveedor
         const porProv = {};
         for (const s of selecciones) {
-          const k = s.proveedorNit || 'sin-proveedor';
+          const k = (s.proveedorNit || '').trim().replace(/\.0$/, '') || 'sin-proveedor';
           if (!porProv[k]) porProv[k] = { nit: s.proveedorNit, nombre: s.proveedorNombre, items: [] };
           porProv[k].items.push(s);
         }

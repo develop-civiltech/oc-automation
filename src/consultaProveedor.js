@@ -248,6 +248,7 @@ function ejecutarConsulta(insumo, codigoProyecto, comprasParsed, zonaProyecto) {
 
 function fmtHistorial(c) {
   return {
+    nit:       c.nit || '',
     proveedor: c.prov?.nombre || c.nit || '',
     fecha:     c.fechaRaw,
     precio:    c.precio,
