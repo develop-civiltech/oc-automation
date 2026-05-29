@@ -2508,7 +2508,7 @@ const servidor = http.createServer(async (req, res) => {
       let requerimientoRecalculado = null;
       if (accion === 'anular' && ctx.Requerimientos) {
         try {
-          const reqId = (actualizado.fields || {}).requerimientoId;
+          const reqId = (actualizado?.fields || actualizado || {}).requerimientoId;
           if (reqId) {
             const reqItem = await g.getListItem(ctx.siteId, ctx.Requerimientos, reqId);
             const nuevoEstado = await calcularEstadoRequerimiento(ctx, reqItem);
