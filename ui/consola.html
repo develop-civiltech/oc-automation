@@ -1338,6 +1338,7 @@ const $$ = sel => document.querySelectorAll(sel);
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function fmt$(n){ const v = Number(n||0); return v.toLocaleString('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}) }
 function fmtFecha(iso){ if(!iso) return ''; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleDateString('es-CO') }
+function fmtFechaLarga(str){ if(!str) return '—'; const d = new Date(str); if(isNaN(d)) return str; const m=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre']; return `${m[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`; }
 function capFirst(s){ return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
 
 function _coberturaReq(reqId, items) {
@@ -2642,7 +2643,7 @@ function renderItemComparativa(it, idx){
           </td>
           <td class="mono precio-nuevo">${fmt$(p.ultimoPrecio)}</td>
           <td class="mono" style="color:var(--txt-2)">${fmt$(p.precioMinimo)}</td>
-          <td class="mono" style="color:var(--txt-2);font-size:12px">${esc(p.fechaUltima || '—')}</td>
+          <td class="mono" style="color:var(--txt-2);font-size:12px">${esc(fmtFechaLarga(p.fechaUltima))}</td>
           <td class="mono" style="font-size:11px;color:var(--txt-3)">${esc(p.documento || '—')} · ${p.cantidadCompras || 0}x</td>
           <td class="mono" style="text-align:right">${fmt$(total)}</td>
         </tr>`;

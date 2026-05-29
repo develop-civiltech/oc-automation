@@ -2360,7 +2360,7 @@ const servidor = http.createServer(async (req, res) => {
                 numCotizacion:   oc.numeroOC || '',
                 nitProveedor:    oc.proveedorNit || '',
                 nombreProveedor: oc.proveedorNombre || '',
-                fechaVigencia:   now.slice(0,10),
+                fechaVigencia:   new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }),
                 insumo:          it.descripcion || it.insumo || '',
                 cantidad:        Number(it.cantidad || 1),
                 precio:          precioFinal,
