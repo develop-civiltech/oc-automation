@@ -350,10 +350,12 @@ async function calcularEstadoRequerimiento(ctx, reqItem) {
   const itemsActivos = itemsReq.filter(it => !it.descartado);
   let cubiertos = 0, total = 0;
   for (const it of itemsActivos) {
-    const k = claveInsumo(it.homologadoCon || it.insumo);
-    const req = Number(it.cantidad || 0);
+    const k     = claveInsumo(it.homologadoCon || it.insumo);
+    const kOrig = claveInsumo(it.insumo);
+    const req   = Number(it.cantidad || 0);
     total++;
-    if ((cubierto[k] || 0) + 1e-9 >= req) cubiertos++;
+    const cantCubierta = (cubierto[k] || 0) + (k !== kOrig ? cubierto[kOrig] || 0 : 0);
+    if (cantCubierta + 1e-9 >= req) cubiertos++;
   }
   if (cubiertos === 0) return 'pendiente';
   if (cubiertos < total) return 'parcial';
@@ -1559,7 +1561,9 @@ const servidor = http.createServer(async (req, res) => {
         }).sort((a, b) => a.ultimoPrecio - b.ultimoPrecio);
 
         const cantidadSolicitada = Number(it.cantidad || 0);
-        const cantidadCubierta   = cubiertoPorInsumo[claveInsumo(it.homologadoCon || it.insumo)] || 0;
+        const kC   = claveInsumo(it.homologadoCon || it.insumo);
+        const kCOr = claveInsumo(it.insumo);
+        const cantidadCubierta   = (cubiertoPorInsumo[kC] || 0) + (kC !== kCOr ? cubiertoPorInsumo[kCOr] || 0 : 0);
         const cantidadRestante   = Math.max(0, cantidadSolicitada - cantidadCubierta);
         const yaGestionado       = cantidadCubierta + 1e-9 >= cantidadSolicitada && cantidadSolicitada > 0;
 

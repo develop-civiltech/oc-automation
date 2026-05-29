@@ -1355,8 +1355,9 @@ function _coberturaReq(reqId, items) {
   }
   return items.map(it => {
     const k        = norm(it.homologadoCon || it.insumo || it.descripcion);
+    const kOrig    = norm(it.insumo || it.descripcion);
     const cantSol  = Number(it.cantidad || 0);
-    const cantCub  = Math.min(cubierto[k] || 0, cantSol);
+    const cantCub  = Math.min((cubierto[k] || 0) + (k !== kOrig ? cubierto[kOrig] || 0 : 0), cantSol);
     const cantRest = Math.max(0, cantSol - cantCub);
     const gestionado = cantCub + 1e-9 >= cantSol && cantSol > 0;
     const parcial    = cantCub > 0 && !gestionado;
