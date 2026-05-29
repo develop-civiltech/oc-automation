@@ -96,7 +96,8 @@ async function ocDesdeSharePoint(itemId) {
     fechaEntrega:           f.fechaEntrega ? new Date(f.fechaEntrega).toLocaleDateString('es-CO') : '',
     requerimientoOrigen:    f.requerimientoOrigen || '',
     condicionesComerciales: f.condicionesComerciales || '',
-    observaciones:       f.observaciones || '',
+    observaciones:          f.observaciones || '',
+    estado:                 f.estado || 'borrador',
     items,
   };
 }
