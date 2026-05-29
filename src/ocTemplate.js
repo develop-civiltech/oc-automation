@@ -161,7 +161,9 @@ function generarHTML(oc, cfg) {
   <button class="btn-close" onclick="window.close()">Cerrar</button>
 </div>
 
-${oc.estado === 'borrador' ? '<div class="marca-agua">NO APROBADO</div>' : ''}
+${oc.estado === 'borrador' ? '<div class="marca-agua">NO APROBADO</div>'
+  : oc.estado === 'anulada' ? '<div class="marca-agua">ANULADO</div>'
+  : ''}
 
 <div class="wrap">
   <div class="hdr">
