@@ -618,6 +618,15 @@ function getNextConsecutivoProyecto(proyecto) {
   return String(n).padStart(4, '0');
 }
 
+function setConsecutivoProyecto(proyecto, valor) {
+  const d = db(), now = new Date().toISOString();
+  d.prepare(`
+    INSERT INTO consecutivos_proyecto (proyecto, ultimo_consecutivo, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(proyecto) DO UPDATE SET ultimo_consecutivo = ?, updated_at = ?
+  `).run(proyecto, valor, now, valor, now);
+}
+
 // ── Conteo ────────────────────────────────────────────────────────────────────
 
 function counts() {
@@ -679,4 +688,5 @@ module.exports = {
   isReady,
   norm,
   getNextConsecutivoProyecto,
+  setConsecutivoProyecto,
 };
