@@ -1079,7 +1079,7 @@ const servidor = http.createServer(async (req, res) => {
       const { email, nombre } = await auth.exchangeCode(code, state, AUTH_REDIRECT_URI);
 
       // Verificar que el usuario esté registrado y activo
-      const usuario = localDb.getUsuarioByEmail(email);
+      let usuario = localDb.getUsuarioByEmail(email);
       if (!usuario) {
         // Auto-registrar como pendiente de aprobación
         try {
@@ -1096,9 +1096,14 @@ const servidor = http.createServer(async (req, res) => {
         return;
       }
       if (!usuario.activo) {
-        res.writeHead(302, { 'Location': '/?auth_error=pendiente' });
-        res.end();
-        return;
+        // Puede que la aprobación vino de otro equipo y aún no sincronizó — forzar sync
+        await syncService.syncAll().catch(() => {});
+        usuario = localDb.getUsuarioByEmail(email);
+        if (!usuario?.activo) {
+          res.writeHead(302, { 'Location': '/?auth_error=pendiente' });
+          res.end();
+          return;
+        }
       }
 
       const sessionId = auth.createSession(email, usuario.nombre || nombre, usuario.rol);
@@ -3613,6 +3618,7 @@ Responde en español, de forma concisa y práctica. Señala alertas de sobrecons
   // ── GET /usuarios → lista de usuarios (solo admin) ──────────────────────
   if (req.method === 'GET' && url === '/usuarios') {
     if (req._sesion?.rol !== 'admin') return json({ error: 'Acceso denegado' }, 403);
+    syncService.syncAll().catch(() => {}); // actualiza en segundo plano para la próxima carga
     return json(localDb.getUsuarios());
   }
 

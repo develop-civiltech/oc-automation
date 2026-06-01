@@ -1279,7 +1279,7 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
         </summary>
         <div style="margin-top:16px">
           <div class="desc" style="margin-bottom:14px">Aprueba o desactiva cuentas de usuarios. Solo los usuarios con estado Activo pueden iniciar sesión.</div>
-          <button class="btn btn-ghost btn-sm" onclick="cargarUsuariosAdmin()" style="margin-bottom:12px">Actualizar lista</button>
+          <button class="btn btn-ghost btn-sm" onclick="(async()=>{await fetch('/sync').catch(()=>{});await cargarUsuariosAdmin();})()" style="margin-bottom:12px">Actualizar lista</button>
           <div id="usuarios-loading" style="font-size:12px;color:var(--txt-3);display:none">Cargando...</div>
           <div class="tabla-wrap" id="usuarios-tabla-wrap" style="display:none">
             <table id="tabla-usuarios">

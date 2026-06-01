@@ -32,8 +32,10 @@ function formato(numero) {
 }
 
 async function siguienteNumeroSP(siteId, listOrdenesId) {
-  const localDb = require('./db');
-  // SQLite tiene todas las OCs sincronizadas; evita descargar toda la lista de SP
+  const localDb  = require('./db');
+  const syncSvc  = require('./syncService');
+  // Sync incremental rápido antes de leer el máx — minimiza ventana de conflicto entre equipos
+  await syncSvc.syncAll().catch(() => {});
   const sqlite = localDb.getOrdenesCompra();
   const fuente = sqlite.length > 0
     ? sqlite
@@ -58,7 +60,9 @@ function formatoOS(numero) {
 }
 
 async function siguienteNumeroOS(siteId, listOrdenesServicioId) {
-  const localDb = require('./db');
+  const localDb  = require('./db');
+  const syncSvc  = require('./syncService');
+  await syncSvc.syncAll().catch(() => {});
   const sqlite = localDb.getOrdenesServicio();
   const fuente = sqlite.length > 0
     ? sqlite

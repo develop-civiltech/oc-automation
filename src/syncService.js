@@ -15,7 +15,7 @@ require('dotenv').config();
 const g  = require('./graphStorage');
 const db = require('./db');
 
-const SYNC_INTERVAL_MS = (parseInt(process.env.SYNC_INTERVAL_MIN) || 2) * 60 * 1000;
+const SYNC_INTERVAL_MS = (parseFloat(process.env.SYNC_INTERVAL_MIN) || 0.167) * 60 * 1000; // default ~10 s
 
 let _syncTimer    = null;
 let _syncing      = false;
