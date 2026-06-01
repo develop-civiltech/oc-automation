@@ -2244,13 +2244,16 @@ async function emitirOS() {
 
   // Validar proveedor inscrito (misma lógica que módulo OC)
   {
-    const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const _normN   = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const _normNom = nom => String(nom || '').toLowerCase().replace(/\./g, '').replace(/[,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     const nitN = _normN(os.proveedorNit);
-    const nom  = (os.proveedorNombre || '').trim().toLowerCase();
+    const nom  = _normNom(os.proveedorNombre);
+    const freshProvs = await fetch('/proveedores').then(r => r.json()).catch(() => null);
+    if (freshProvs) ESTADO.proveedoresDB = freshProvs;
     const dbProv = ESTADO.proveedoresDB || [];
     const registrado = dbProv.some(r =>
       (nitN && _normN(r.nit) === nitN) ||
-      (nom  && (r.razonSocial || r.nombre || '').toLowerCase() === nom)
+      (nom  && (_normNom(r.razonSocial || r.nombre) === nom || _normNom(r.nombre) === nom))
     );
     if (!registrado && (nitN || nom)) {
       const label = `${os.proveedorNombre || '(sin nombre)'}${os.proveedorNit ? ' · NIT ' + os.proveedorNit : ''}`;
@@ -3050,22 +3053,26 @@ async function confirmarGenerarOC(){
   });
   // Validar que todos los proveedores seleccionados estén inscritos
   {
-    const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const _normN   = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const _normNom = nom => String(nom || '').toLowerCase().replace(/\./g, '').replace(/[,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     const provMap = new Map();
     sel.forEach(s => {
       const nit = (s.proveedorNit || '').trim();
       const nom = (s.proveedorNombre || '').trim();
       if (!nit && !nom) return;
-      const key = _normN(nit) || nom.toLowerCase();
+      const key = _normN(nit) || _normNom(nom);
       if (!provMap.has(key)) provMap.set(key, { nit, nombre: nom });
     });
     if (provMap.size > 0) {
+      const freshProvs = await fetch('/proveedores').then(r => r.json()).catch(() => null);
+      if (freshProvs) ESTADO.proveedoresDB = freshProvs;
       const dbProv = ESTADO.proveedoresDB || [];
       const noReg = [...provMap.values()].filter(p => {
         const nitN = _normN(p.nit);
+        const nomN = _normNom(p.nombre);
         return !dbProv.some(r =>
           (nitN && _normN(r.nit) === nitN) ||
-          (p.nombre && (r.nombre || '').toLowerCase() === p.nombre.toLowerCase())
+          (nomN && (_normNom(r.nombre) === nomN || _normNom(r.razonSocial) === nomN))
         );
       });
       if (noReg.length) {
@@ -4297,24 +4304,28 @@ async function generarOCdesdeCot(){
 
   // Validar que todos los proveedores (header + por fila) estén inscritos
   {
-    const _normN = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const _normN   = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
+    const _normNom = nom => String(nom || '').toLowerCase().replace(/\./g, '').replace(/[,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     const provMap = new Map();
     const headerNom = ($('#oc-proveedor')?.value || '').trim();
-    if (headerNom) provMap.set(headerNom.toLowerCase(), { nit: '', nombre: headerNom });
+    if (headerNom) provMap.set(_normNom(headerNom), { nit: '', nombre: headerNom });
     filas.forEach(f => {
       const nom = (f.proveedor || '').trim();
       const nit = (f.nit      || '').trim();
       if (!nom && !nit) return;
-      const key = _normN(nit) || nom.toLowerCase();
+      const key = _normN(nit) || _normNom(nom);
       if (!provMap.has(key)) provMap.set(key, { nit, nombre: nom });
     });
     if (provMap.size > 0) {
+      const freshProvs = await fetch('/proveedores').then(r => r.json()).catch(() => null);
+      if (freshProvs) ESTADO.proveedoresDB = freshProvs;
       const dbProv = ESTADO.proveedoresDB || [];
       const noReg = [...provMap.values()].filter(p => {
         const nitN = _normN(p.nit);
+        const nomN = _normNom(p.nombre);
         return !dbProv.some(r =>
           (nitN && _normN(r.nit) === nitN) ||
-          (p.nombre && (r.nombre || '').toLowerCase() === p.nombre.toLowerCase())
+          (nomN && (_normNom(r.nombre) === nomN || _normNom(r.razonSocial) === nomN))
         );
       });
       if (noReg.length) {
