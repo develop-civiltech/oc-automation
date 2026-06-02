@@ -3002,18 +3002,18 @@ function autocompletarNombreOC(idx) {
 function autocompletarNitHeader() {
   const _normNom = n => String(n||'').toLowerCase().replace(/\./g,'').replace(/[,\-]/g,' ').replace(/\s+/g,' ').trim();
   const nom = ($('#oc-razon-social')?.value || '').trim();
-  if (!nom) return;
+  if (!nom) { if ($('#oc-nit')) $('#oc-nit').value = ''; return; }
   const prov = (ESTADO.proveedoresDB||[]).find(p =>
     _normNom(p.nombre) === _normNom(nom) || _normNom(p.razonSocial) === _normNom(nom));
-  if (prov?.nit && $('#oc-nit') && !$('#oc-nit').value.trim()) $('#oc-nit').value = prov.nit;
+  if ($('#oc-nit')) $('#oc-nit').value = prov?.nit || '';
 }
 
 function autocompletarNombreHeader() {
   const _normN = n => String(n||'').replace(/[^0-9]/g,'').slice(0,9);
   const nit = ($('#oc-nit')?.value || '').trim();
-  if (!nit) return;
+  if (!nit) { if ($('#oc-razon-social')) $('#oc-razon-social').value = ''; return; }
   const prov = (ESTADO.proveedoresDB||[]).find(p => _normN(p.nit) === _normN(nit));
-  if (prov?.nombre && $('#oc-razon-social') && !$('#oc-razon-social').value.trim()) $('#oc-razon-social').value = prov.nombre;
+  if ($('#oc-razon-social')) $('#oc-razon-social').value = prov?.nombre || '';
 }
 
 function actualizarResumenSeleccion(){
