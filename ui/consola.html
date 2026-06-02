@@ -342,10 +342,14 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
               <select id="oc-proyecto" required onchange="actualizarReqsParaVincular()" ><option value="">— Selecciona el proyecto —</option></select>
             </div>
             <div class="campo">
-              <label>Proveedor (opcional)</label>
-              <input type="text" id="oc-proveedor" placeholder="Se detecta del documento" list="lista-proveedores-oc">
-              <datalist id="lista-proveedores-oc"></datalist>
-              <datalist id="lista-proveedores-nombres"></datalist>
+              <label>Razón social del proveedor</label>
+              <input type="text" id="oc-razon-social" placeholder="Se detecta del documento" list="lista-prov-oc-nombres" oninput="autocompletarNitHeader()">
+              <datalist id="lista-prov-oc-nombres"></datalist>
+            </div>
+            <div class="campo" style="max-width:160px">
+              <label>NIT proveedor</label>
+              <input type="text" id="oc-nit" placeholder="901413646" list="lista-prov-oc-nits" oninput="autocompletarNombreHeader()">
+              <datalist id="lista-prov-oc-nits"></datalist>
             </div>
             <div class="campo" style="max-width:180px">
               <label>Fecha</label>
@@ -390,7 +394,6 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
                   <th style="width:70px">Cant.</th><th style="width:60px">Unidad</th>
                   <th style="width:130px">Precio unit.</th>
                   <th style="width:70px">IVA %</th>
-                  <th>Proveedor</th><th style="width:90px">NIT</th>
                 </tr></thead>
                 <tbody id="tabla-cuerpo-oc"></tbody>
               </table>
@@ -2300,11 +2303,15 @@ async function cargarAutocompletes(){
   ESTADO.insumosBD     = insumos;
   ESTADO.proyectos     = proyectos;
 
-  const dl1 = $('#lista-proveedores'); const dl2 = $('#lista-proveedores-oc');
+  const dl1 = $('#lista-proveedores');
   if (dl1) dl1.innerHTML = ESTADO.proveedoresDB.map(p => `<option value="${esc(p.nombre+' (NIT: '+p.nit+')')}">`).join('');
-  if (dl2) dl2.innerHTML = ESTADO.proveedoresDB.map(p => `<option value="${esc(p.nombre+' (NIT: '+p.nit+')')}">`).join('');
   const dl3 = $('#lista-proveedores-nombres');
   if (dl3) dl3.innerHTML = ESTADO.proveedoresDB.map(p => `<option value="${esc(p.nombre)}">`).join('');
+  // Datalists para header de módulo 1.2 (Razón Social y NIT separados)
+  const dlNombresOC = $('#lista-prov-oc-nombres');
+  if (dlNombresOC) dlNombresOC.innerHTML = ESTADO.proveedoresDB.map(p => `<option value="${esc(p.nombre || p.razonSocial || '')}">`).join('');
+  const dlNitsOC = $('#lista-prov-oc-nits');
+  if (dlNitsOC) dlNitsOC.innerHTML = ESTADO.proveedoresDB.map(p => `<option value="${esc(p.nit || '')}" label="${esc(p.nombre || '')}">`).join('');
 
   poblarDatalistInsumos();
 
@@ -2989,6 +2996,24 @@ function autocompletarNombreOC(idx) {
     nomEl.value = prov.nombre;
     actualizarOC(idx, 'proveedor', prov.nombre);
   }
+}
+
+// Autocompletado mutuo para los campos del header de módulo 1.2
+function autocompletarNitHeader() {
+  const _normNom = n => String(n||'').toLowerCase().replace(/\./g,'').replace(/[,\-]/g,' ').replace(/\s+/g,' ').trim();
+  const nom = ($('#oc-razon-social')?.value || '').trim();
+  if (!nom) return;
+  const prov = (ESTADO.proveedoresDB||[]).find(p =>
+    _normNom(p.nombre) === _normNom(nom) || _normNom(p.razonSocial) === _normNom(nom));
+  if (prov?.nit && $('#oc-nit') && !$('#oc-nit').value.trim()) $('#oc-nit').value = prov.nit;
+}
+
+function autocompletarNombreHeader() {
+  const _normN = n => String(n||'').replace(/[^0-9]/g,'').slice(0,9);
+  const nit = ($('#oc-nit')?.value || '').trim();
+  if (!nit) return;
+  const prov = (ESTADO.proveedoresDB||[]).find(p => _normN(p.nit) === _normN(nit));
+  if (prov?.nombre && $('#oc-razon-social') && !$('#oc-razon-social').value.trim()) $('#oc-razon-social').value = prov.nombre;
 }
 
 function actualizarResumenSeleccion(){
@@ -4216,9 +4241,7 @@ function renderTablaOC(){
       <td><input class="td-input" value="${esc(item.cantidad||1)}" type="number" min="0.01" step="any" oninput="actualizarOC(${idx},'cantidad',this.value)" style="width:65px"></td>
       <td><input class="td-input" value="${esc(item.unidad||'UND')}" oninput="actualizarOC(${idx},'unidad',this.value)" style="width:55px"></td>
       <td><input class="td-input precio-nuevo" value="${esc(item.precio||'')}" type="number" min="0" step="any" oninput="actualizarOC(${idx},'precio',this.value)" placeholder="0.00" style="width:120px"></td>
-      <td><input class="td-input" value="${esc(ivaVal)}" type="number" min="0" max="100" step="0.01" oninput="actualizarOC(${idx},'ivaPct',this.value)" style="width:65px"></td>
-      <td><input class="td-input" id="oc-row-prov-${idx}" value="${esc(item.proveedor||'')}" oninput="actualizarOC(${idx},'proveedor',this.value);autocompletarNitOC(${idx})" style="width:200px" list="lista-proveedores-nombres"></td>
-      <td><input class="td-input mono" id="oc-row-nit-${idx}" value="${esc(item.nit||'')}" oninput="actualizarOC(${idx},'nit',this.value);autocompletarNombreOC(${idx})" style="width:90px"></td>`;
+      <td><input class="td-input" value="${esc(ivaVal)}" type="number" min="0" max="100" step="0.01" oninput="actualizarOC(${idx},'ivaPct',this.value)" style="width:65px"></td>`;
     tbody.appendChild(tr);
   });
   actualizarResumenOC();
@@ -4256,8 +4279,7 @@ function actualizarOC(idx,campo,valor){ESTADO.itemsOC[idx][campo]=valor;actualiz
 function toggleExcluirOC(idx,v){ESTADO.itemsOC[idx].excluir=v;$$('#tabla-cuerpo-oc tr')[idx].classList.toggle('excluida',v);actualizarResumenOC()}
 function agregarFilaOC(){
   ESTADO.itemsOC.push({id:ESTADO.itemsOC.length,excluir:false,insumo:'',cantidad:1,unidad:'UND',precio:'',
-    ivaPct: (window.IVA_DEFAULT ?? 19),
-    proveedor:$('#oc-proveedor').value||'',nit:''});
+    ivaPct: (window.IVA_DEFAULT ?? 19)});
   renderTablaOC();
   document.querySelector('#tabla-cuerpo-oc tr:last-child .td-input').focus();
 }
@@ -4283,10 +4305,18 @@ $('#btn-extraer-oc')?.addEventListener('click', async () => {
     const data = await resp.json();
     if (!resp.ok || data.error) throw new Error(data.error);
     if (!data.items?.length) throw new Error('No se encontraron ítems en el documento');
-    const provManual = $('#oc-proveedor').value;
-    ESTADO.itemsOC = data.items.map((it,i) => ({
-      ...it, id:i, excluir:false,
-      proveedor: it.proveedor || provManual || '', nit: it.nit || '',
+    // Poblar header con proveedor/NIT del primer ítem (si el header está vacío)
+    if (!($('#oc-razon-social')?.value || '').trim() && data.items?.[0]?.proveedor) {
+      $('#oc-razon-social').value = data.items[0].proveedor;
+      if (data.items[0].nit) $('#oc-nit').value = data.items[0].nit;
+      autocompletarNitHeader();
+      autocompletarNombreHeader();
+    }
+    ESTADO.itemsOC = data.items.map((it, i) => ({
+      id: i, excluir: false,
+      insumo: it.insumo || '', cantidad: it.cantidad || 1,
+      unidad: it.unidad || 'UND', precio: it.precio || '',
+      ivaPct: it.ivaPct ?? 19,
     }));
     setEstadoOC('ok', `✓ ${ESTADO.itemsOC.length} ítem(s) extraídos. Revisa y genera la OC.`);
     renderTablaOC();
@@ -4302,39 +4332,27 @@ async function generarOCdesdeCot(){
   const proyecto = $('#oc-proyecto').value;
   if (!proyecto) return alert('Selecciona un proyecto.');
 
-  // Validar que todos los proveedores (header + por fila) estén inscritos
-  {
-    const _normN   = nit => String(nit || '').replace(/[^0-9]/g, '').slice(0, 9);
-    const _normNom = nom => String(nom || '').toLowerCase().replace(/\./g, '').replace(/[,\-]/g, ' ').replace(/\s+/g, ' ').trim();
-    const provMap = new Map();
-    const headerNom = ($('#oc-proveedor')?.value || '').trim();
-    if (headerNom) provMap.set(_normNom(headerNom), { nit: '', nombre: headerNom });
-    filas.forEach(f => {
-      const nom = (f.proveedor || '').trim();
-      const nit = (f.nit      || '').trim();
-      if (!nom && !nit) return;
-      const key = _normN(nit) || _normNom(nom);
-      if (!provMap.has(key)) provMap.set(key, { nit, nombre: nom });
-    });
-    if (provMap.size > 0) {
-      const freshProvs = await fetch('/proveedores').then(r => r.json()).catch(() => null);
-      if (freshProvs) ESTADO.proveedoresDB = freshProvs;
-      const dbProv = ESTADO.proveedoresDB || [];
-      const noReg = [...provMap.values()].filter(p => {
-        const nitN = _normN(p.nit);
-        const nomN = _normNom(p.nombre);
-        return !dbProv.some(r =>
-          (nitN && _normN(r.nit) === nitN) ||
-          (nomN && (_normNom(r.nombre) === nomN || _normNom(r.razonSocial) === nomN))
-        );
-      });
-      if (noReg.length) {
-        const lista = noReg.map(p => `• ${p.nombre || '(sin nombre)'}${p.nit ? ' · NIT ' + p.nit : ''}`).join('\n');
-        alert(`No se puede generar la OC.\n\nProveedor(es) no registrado(s) en el catálogo:\n${lista}\n\nInscríbelo(s) en Configuración ERP → Inscribir proveedores y vuelve a intentarlo.`);
-        const primero = noReg[0];
-        abrirInscribirProveedor(primero.nit || '', primero.nombre || '');
-        return;
-      }
+  // Proveedor desde el header (campos independientes)
+  const provNombre = ($('#oc-razon-social')?.value || '').trim();
+  const provNit    = ($('#oc-nit')?.value || '').trim();
+
+  // Validar proveedor del header si fue especificado
+  if (provNombre || provNit) {
+    const _normN   = nit => String(nit||'').replace(/[^0-9]/g,'').slice(0,9);
+    const _normNom = nom => String(nom||'').toLowerCase().replace(/\./g,'').replace(/[,\-]/g,' ').replace(/\s+/g,' ').trim();
+    const freshProvs = await fetch('/proveedores').then(r => r.json()).catch(() => null);
+    if (freshProvs) ESTADO.proveedoresDB = freshProvs;
+    const dbProv = ESTADO.proveedoresDB || [];
+    const nitN = _normN(provNit);
+    const nomN = _normNom(provNombre);
+    const registrado = dbProv.some(r =>
+      (nitN && _normN(r.nit) === nitN) ||
+      (nomN && (_normNom(r.nombre) === nomN || _normNom(r.razonSocial) === nomN))
+    );
+    if (!registrado) {
+      alert(`No se puede generar la OC.\n\nProveedor no registrado en el catálogo:\n• ${provNombre || '(sin nombre)'}${provNit ? ' · NIT ' + provNit : ''}\n\nInscríbelo en Configuración ERP → Inscribir proveedores y vuelve a intentarlo.`);
+      abrirInscribirProveedor(provNit, provNombre);
+      return;
     }
   }
 
@@ -4345,12 +4363,10 @@ async function generarOCdesdeCot(){
   try{
     const fecha  = $('#oc-fecha').value.split('-').reverse().join('/');
     const numCot = $('#oc-num-cot').value || 'COT-MANUAL';
-    const proveedor = filas[0]?.proveedor || '';
-    const nit       = filas[0]?.nit || '';
     const reqVincular = ($('#oc-req-vincular')?.value || '').trim();
     const resp = await fetch('/generar-oc-cotizacion', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ proyecto, fecha, numCotizacion: numCot, proveedor, nit, items: filas, requerimientoId: reqVincular || undefined }),
+      body: JSON.stringify({ proyecto, fecha, numCotizacion: numCot, proveedor: provNombre, nit: provNit, items: filas, requerimientoId: reqVincular || undefined }),
     });
     const data = await resp.json();
     if (!resp.ok || data.error) throw new Error(data.error);
