@@ -678,19 +678,29 @@ async function agregarFilasCompras(filas, ctx) {
 // ── Extracción con Gemini API ─────────────────────────────────────────────────
 
 function parsearJSONGemini(str) {
+  // 1. Parseo limpio (caso normal)
   try { return JSON.parse(str); } catch {}
-  // Respuesta truncada por límite de tokens — recuperar ítems completos
+
   const inicio = str.indexOf('[');
   if (inicio < 0) return [];
   const fragmento = str.slice(inicio);
-  // Intentar cerrar tras el último objeto completo
-  for (const cierre of ['}\n]', '},\n]', '}]', '}']) {
-    const pos = fragmento.lastIndexOf('}');
-    if (pos < 0) break;
-    try { return JSON.parse(fragmento.slice(0, pos + 1) + ']'); } catch {}
-    break;
+
+  // 2. Recuperar objetos completos aunque el array esté truncado
+  const items = [];
+  const objRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}/g;
+  let match;
+  while ((match = objRegex.exec(fragmento)) !== null) {
+    try {
+      const obj = JSON.parse(match[0]);
+      if (obj.insumo) items.push(obj); // solo ítems válidos (descarta bloque totales)
+    } catch {}
   }
-  console.warn('[extraerConGemini] JSON truncado — se recuperaron 0 ítems. Fragmento:', str.slice(0, 200));
+  if (items.length > 0) {
+    console.warn(`[extraerConGemini] JSON truncado — recuperados ${items.length} ítems parciales`);
+    return items;
+  }
+
+  console.warn('[extraerConGemini] JSON truncado sin recuperación. Fragmento:', str.slice(0, 200));
   return [];
 }
 
@@ -744,7 +754,7 @@ ${PROMPT}` }
 
   const body = JSON.stringify({
     contents: [{ parts: partes }],
-    generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+    generationConfig: { temperature: 0, maxOutputTokens: 32768 },
   });
 
   const respuesta = await new Promise((resolve, reject) => {
@@ -2869,7 +2879,7 @@ Reglas para el clausulado (CRÍTICO — aplica todos sin excepción):
 
         const gBody = JSON.stringify({
           contents: [{ parts: partes }],
-          generationConfig: { temperature: 0, maxOutputTokens: 8192 },
+          generationConfig: { temperature: 0, maxOutputTokens: 32768 },
         });
 
         const gResp = await new Promise((resolve, reject) => {
