@@ -1359,6 +1359,8 @@ const servidor = http.createServer(async (req, res) => {
           julio:6, agosto:7, septiembre:8, octubre:9, noviembre:10, diciembre:11 };
         const m = f.trim().toLowerCase().match(/^(\w+)\s+(\d+),?\s+(\d{4})$/);
         if (m) return new Date(+m[3], meses[m[1]] ?? 0, +m[2]).getTime();
+        const m2 = f.trim().toLowerCase().match(/^(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})$/);
+        if (m2) return new Date(+m2[3], meses[m2[2]] ?? 0, +m2[1]).getTime();
         const d = new Date(f); return isNaN(d) ? 0 : d.getTime();
       };
       resultados.sort((a, b) => parseFechaSort(b.fecha) - parseFechaSort(a.fecha));
@@ -3314,11 +3316,21 @@ FORMATO:
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString());
         // body: { items: [{ proyecto, ocId, numeroOC, insumo, unidad, cantidad, precioUnitario, notas }] }
+        const items   = Array.isArray(body.items) ? body.items : [body];
+        // Idempotencia: rechazar si ya existe una entrada para la misma OC en los últimos 30 s
+        if (items.length > 0 && items[0].ocId) {
+          const ventana = new Date(Date.now() - 30000).toISOString();
+          const reciente = localDb.db().prepare(
+            "SELECT COUNT(*) AS n FROM movimientos_inventario WHERE json_extract(data,'$.ocId')=? AND json_extract(data,'$.tipo')='entrada' AND json_extract(data,'$.fechaCreacion')>?"
+          ).get(items[0].ocId, ventana);
+          if (reciente?.n > 0) {
+            return json({ error: 'Ya existe una entrada registrada para esta OC en los últimos 30 segundos. Espera y recarga antes de intentar de nuevo.' }, 409);
+          }
+        }
         const ctx = await ctxSharePoint();
         if (!ctx.MovimientosInventario) return json({ error: 'Lista MovimientosInventario no disponible' }, 503);
         const usuario = process.env.USUARIO_EMAIL || 'sistema';
         const now     = new Date().toISOString();
-        const items   = Array.isArray(body.items) ? body.items : [body];
         const creados = [];
         const batchId = `BORR-EA-${Date.now()}`;
         for (const it of items) {
