@@ -3572,14 +3572,13 @@ FORMATO:
 
         if (!movs.length) return json({ ok: false, error: 'Documento no encontrado' }, 404);
 
-        let anulados = 0;
-        for (const m of movs) {
+        // Actualizar todos en paralelo en vez de secuencialmente (reduce N×150ms → ~150ms)
+        await Promise.all(movs.map(m => {
           const updated = { ...m, estado: 'anulado', estadoDoc: 'anulado' };
-          await g.updateListItem(ctx.siteId, ctx.MovimientosInventario, m.id, { estado: 'anulado', estadoDoc: 'anulado' });
-          localDb.upsertDocumento('movimientos_inventario', { id: m.id, fields: updated });
-          anulados++;
-        }
-        return json({ ok: true, anulados });
+          return g.updateListItem(ctx.siteId, ctx.MovimientosInventario, m.id, { estado: 'anulado', estadoDoc: 'anulado' })
+            .then(() => localDb.upsertDocumento('movimientos_inventario', { id: m.id, fields: updated }));
+        }));
+        return json({ ok: true, anulados: movs.length });
       } catch (err) { return json({ error: err.message }, 500); }
     });
     return;

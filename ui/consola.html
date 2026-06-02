@@ -838,7 +838,6 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
             <th>Ref. Doc.</th><th>Estado</th><th>Fecha</th><th>Proyecto</th><th>OC</th>
             <th style="text-align:right"># Ítems</th>
             <th style="text-align:right">Valor Total</th>
-            <th></th>
           </tr></thead>
           <tbody id="tbody-inv-entradas"><tr><td colspan="7" style="text-align:center;color:var(--txt-2);padding:24px">Cargando…</td></tr></tbody>
         </table>
@@ -853,7 +852,6 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
             <th>Ref. Doc.</th><th>Estado</th><th>Fecha</th><th>Proyecto</th>
             <th style="text-align:right"># Ítems</th>
             <th style="text-align:right">Valor Total</th>
-            <th></th>
           </tr></thead>
           <tbody id="tbody-inv-salidas"></tbody>
         </table>
@@ -4898,7 +4896,7 @@ async function cargarInventario() {
 function _invRenderDocumentos(movs, tbody, tipo) {
   const filtrados = tipo ? movs.filter(m => m.tipo === tipo) : movs;
   const conValor  = filtrados.filter(m => (Number(m.valorTotal) || 0) > 0);
-  const cols = tipo === 'entrada' ? 8 : 7;
+  const cols = tipo === 'entrada' ? 7 : 6;
   if (!conValor.length) {
     tbody.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;color:var(--txt-2);padding:24px">Sin ${tipo === 'entrada' ? 'entradas' : 'salidas'} registradas.</td></tr>`;
     return;
@@ -4933,9 +4931,6 @@ function _invRenderDocumentos(movs, tbody, tipo) {
     const chip    = CHIPS[doc.estadoDoc] || CHIPS.aprobado;
     const docJson = JSON.stringify(doc).replace(/'/g, '&#39;');
     const ocCol   = tipo === 'entrada' ? `<td style="font-size:11px;color:var(--txt-2)">${esc(doc.numeroOC||'—')}</td>` : '';
-    const anularBtn = doc.estadoDoc !== 'anulado'
-      ? `<button class="btn btn-danger btn-sm" style="font-size:10px;padding:2px 8px" onclick="event.stopPropagation();anularDocumentoInv('${esc(doc.ref||doc.batchId)}','${esc(doc.tipo)}')">Anular</button>`
-      : `<span style="font-size:10px;color:var(--txt-3)">Anulado</span>`;
     return `<tr style="cursor:pointer" onclick="_invVerDocumento(JSON.parse(this.dataset.doc))" data-doc='${docJson}'>
       <td>${refTxt}</td>
       <td>${chip}</td>
@@ -4944,11 +4939,11 @@ function _invRenderDocumentos(movs, tbody, tipo) {
       ${ocCol}
       <td style="text-align:right">${doc.items.length}</td>
       <td style="text-align:right;font-weight:600">${fmt$(doc.total)}</td>
-      <td>${anularBtn}</td>
     </tr>`;
   }).join('');
 }
 
+// placeholder para evitar referencias rotas (anulación se gestiona desde el modal de detalle)
 async function anularDocumentoInv(docRef, tipo) {
   if (!confirm(`¿Anular el documento ${docRef}?\n\nEsta acción marcará todos los movimientos como anulados y ajustará el stock. No se puede deshacer.`)) return;
   try {
