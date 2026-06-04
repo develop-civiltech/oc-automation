@@ -1040,9 +1040,19 @@ const servidor = http.createServer(async (req, res) => {
   };
 
   // ── Middleware de autenticación ──────────────────────────────────────────
+  // SKIP_AUTH=true (rama sin_loggin): omite Microsoft OAuth, inyecta sesión de admin
+  const SKIP_AUTH    = process.env.SKIP_AUTH === 'true';
+  const SKIP_SESSION = SKIP_AUTH ? {
+    email:  process.env.USUARIO_EMAIL  || 'admin@civiltechic.com',
+    nombre: process.env.USUARIO_NOMBRE || 'Administrador',
+    rol:    'admin',
+  } : null;
+
   const esPublica = RUTAS_PUBLICAS.includes(url);
   const cookies   = auth.parseCookies(req.headers.cookie);
-  const sesion    = auth.validateSession(cookies[auth.COOKIE_NAME]);
+  const sesion    = SKIP_AUTH
+    ? SKIP_SESSION
+    : auth.validateSession(cookies[auth.COOKIE_NAME]);
 
   if (!esPublica && !sesion) {
     return json({ error: 'no_session' }, 401);
