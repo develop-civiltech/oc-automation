@@ -25,6 +25,30 @@ async function leerRequerimientoAuto(rutaArchivo) {
   throw new Error(`Extensión no soportada: ${ext}. Solo .xlsx, .xls o .pdf.`);
 }
 
+// ── Respuesta automática cuando el asunto no matchea el formato esperado ─────
+
+function mensajeFormatoAsuntoInvalido(infoAsunto) {
+  return {
+    accion: 'RESPONDER_FORMATO_ASUNTO_INVALIDO',
+    asunto: `RE: ${infoAsunto.raw}`,
+    cuerpo:
+`Estimado(a),
+
+Hemos recibido su correo, pero el asunto no cumple con el formato requerido para procesar la solicitud:
+
+  ${infoAsunto.error}
+
+Por favor reenvíe su solicitud con el asunto en el siguiente formato exacto:
+
+  SOLICITUD REQUERIMIENTO {CONSECUTIVO} {AAAAMMDD} {PROYECTO}
+
+Ejemplo: SOLICITUD REQUERIMIENTO 0001 20260410 MISTRAL
+
+Saludos,
+Sistema de Gestión de Compras – Civiltech`,
+  };
+}
+
 // ── Respuesta automática cuando no hay adjunto ────────────────────────────────
 
 function mensajeSinAdjunto(infoAsunto) {
@@ -166,8 +190,12 @@ Sistema de Gestión de Compras – Civiltech`,
 async function procesarCorreo(asunto, rutaAdjunto, opts = {}) {
   const infoAsunto = parsearAsunto(asunto);
 
-  // Correo sin formato válido en asunto — ignorar silenciosamente
   if (!infoAsunto.valido) {
+    // Prefijo correcto pero el resto del asunto no matchea — avisar al remitente para que corrija
+    if (infoAsunto.prefijoDetectado) {
+      return mensajeFormatoAsuntoInvalido(infoAsunto);
+    }
+    // Correo ajeno a solicitudes de requerimiento — ignorar silenciosamente
     return {
       accion:  'IGNORAR',
       motivo:  infoAsunto.error,

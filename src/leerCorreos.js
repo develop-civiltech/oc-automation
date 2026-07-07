@@ -369,7 +369,8 @@ async function procesarBuzon(onSolicitud, onOCGenerada, onError) {
         const resultado = await onSolicitud(sol.asunto, sol.rutaAdjunto);
 
         if (resultado.accion === 'RESPONDER_SOLICITAR_ADJUNTO' ||
-            resultado.accion === 'RESPONDER_FORMATO_INVALIDO') {
+            resultado.accion === 'RESPONDER_FORMATO_INVALIDO' ||
+            resultado.accion === 'RESPONDER_FORMATO_ASUNTO_INVALIDO') {
           try {
             await responderCorreo(
               { id: sol.messageId },

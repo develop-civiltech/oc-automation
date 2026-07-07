@@ -17,7 +17,7 @@ function parsearAsunto(asunto) {
   // Verificar que sea una solicitud de requerimiento (acepta "DE" opcional)
   const prefijo = PREFIJOS.find(p => norm.startsWith(p));
   if (!prefijo) {
-    return { valido: false, error: 'El asunto no corresponde a una solicitud de requerimiento' };
+    return { valido: false, prefijoDetectado: false, error: 'El asunto no corresponde a una solicitud de requerimiento' };
   }
 
   // Extraer partes después del prefijo (usando la longitud del prefijo real)
@@ -31,6 +31,7 @@ function parsearAsunto(asunto) {
   if (!match) {
     return {
       valido: false,
+      prefijoDetectado: true,
       error:  'Formato de asunto inválido. Se esperaba: SOLICITUD REQUERIMIENTO {CONSECUTIVO} {YYYYMMDD} {PROYECTO}',
       raw:    asunto,
     };
