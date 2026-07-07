@@ -35,8 +35,12 @@ function parseDate(val) {
     enero:1, febrero:2, marzo:3, abril:4, mayo:5, junio:6,
     julio:7, agosto:8, septiembre:9, octubre:10, noviembre:11, diciembre:12,
   };
-  const m = String(val).trim().toLowerCase().match(/^(\w+)\s+(\d+),?\s+(\d{4})$/);
+  const txt = String(val).trim().toLowerCase();
+  const m = txt.match(/^(\w+)\s+(\d+),?\s+(\d{4})$/);
   if (m) return new Date(+m[3], (meses[m[1]] || 1) - 1, +m[2]);
+  // Formato es-CO usado al aprobar OCs: "23 de junio de 2026"
+  const mEs = txt.match(/^(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})$/);
+  if (mEs) return new Date(+mEs[3], (meses[mEs[2]] || 1) - 1, +mEs[1]);
   if (/^\d{4}-\d{2}-\d{2}/.test(String(val))) return new Date(String(val).slice(0, 10));
   const d = new Date(val);
   return isNaN(d) ? null : d;
