@@ -316,7 +316,9 @@ A partir de julio 2026 el ERP se centraliza en un VPS Linux: una sola consola we
 
 ### Primer despliegue (dar de alta el sistema en el VPS)
 
-> **Importante:** llevar también el `data/local.db` existente del equipo central, no arrancar con un volumen vacío. `bootstrapAdmin()` y el registro de usuario en el login (`servidor-cotizaciones.js`) deciden si un usuario ya existe mirando el **caché SQLite local** (`localDb.countUsuarios()` / `getUsuarioByEmail()`), no la lista `UsuariosERP` de SharePoint real. Si el volumen arranca vacío, la primera vez que el servidor levante o que alguien haga login va a **crear un usuario/admin duplicado en SharePoint**, aunque ya exista. Copiando el `local.db` real se evita ese arranque en frío.
+> **Importante:** llevar también el `data/local.db` existente del equipo central, no arrancar con la carpeta `data/` vacía. `bootstrapAdmin()` y el registro de usuario en el login (`servidor-cotizaciones.js`) deciden si un usuario ya existe mirando el **caché SQLite local** (`localDb.countUsuarios()` / `getUsuarioByEmail()`), no la lista `UsuariosERP` de SharePoint real. Si arranca vacía, la primera vez que el servidor levante o que alguien haga login va a **crear un usuario/admin duplicado en SharePoint**, aunque ya exista. Copiando el `local.db` real se evita ese arranque en frío.
+>
+> `data/` se monta directo desde la carpeta del proyecto en el VPS (`./data:/app/data`, ver `docker-compose.yml`) — no es un volumen aparte, así que lo que copies ahí con `scp` es exactamente lo que va a usar el contenedor. El contenedor corre con un usuario de sistema fijo (UID/GID `10001`), por eso el `chown` del paso 2 es necesario: sin él, Docker no puede escribir `local.db` en esa carpeta.
 
 ```bash
 # 1. Llevar el código al VPS (una sola vez)
@@ -327,6 +329,9 @@ cd oc-automation
 #    (ejecutar desde la máquina que sí los tiene, apuntando al VPS)
 scp .env           "usuario@vps:/ruta/oc-automation/.env"
 scp data/local.db  "usuario@vps:/ruta/oc-automation/data/local.db"
+
+# En el VPS: dar permisos de escritura al usuario del contenedor (UID/GID 10001)
+sudo chown -R 10001:10001 data
 
 # 3. Ya en el VPS, dentro de la carpeta del proyecto:
 docker compose build

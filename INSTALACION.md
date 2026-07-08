@@ -100,11 +100,19 @@ scp .env           usuario@vps:/ruta/oc-automation/.env
 scp data/local.db  usuario@vps:/ruta/oc-automation/data/local.db
 ```
 
-> **Por qué copiar también `data/local.db`:** el código decide si un usuario ya existe (para no
-> crear un admin duplicado al primer arranque) consultando el **caché SQLite local**, no la lista
-> `UsuariosERP` de SharePoint directamente. Si el volumen de datos arranca vacío, el primer
-> arranque del servidor —o el primer login— puede crear un usuario/admin **duplicado** en
-> SharePoint. Llevar el `local.db` ya poblado evita ese arranque en frío.
+Ya en el VPS, dar permisos de escritura al usuario del contenedor (corre con UID/GID fijo `10001`,
+no como root):
+```bash
+sudo chown -R 10001:10001 data
+```
+
+> **Por qué copiar también `data/local.db` y ajustar permisos:** el código decide si un usuario ya
+> existe (para no crear un admin duplicado al primer arranque) consultando el **caché SQLite
+> local**, no la lista `UsuariosERP` de SharePoint directamente. La carpeta `data/` se monta
+> directo desde el proyecto (`./data:/app/data`) — no es un volumen aparte — así que si arranca sin
+> `local.db`, o el contenedor no puede escribir ahí por permisos, el primer arranque del servidor
+> —o el primer login— puede crear un usuario/admin **duplicado** en SharePoint. Llevar el
+> `local.db` ya poblado y darle el `chown` correcto evita ese arranque en frío.
 
 ### Paso 3 — Levantar los servicios
 
