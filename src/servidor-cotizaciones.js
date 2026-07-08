@@ -3690,7 +3690,7 @@ Responde en español, de forma concisa y práctica. Señala alertas de sobrecons
 
 });
 
-servidor.listen(PORT, '127.0.0.1', () => {
+servidor.listen(PORT, '0.0.0.0', () => {
   console.log(`\n✓ App de cotizaciones corriendo en http://localhost:${PORT}`);
   console.log('  Abre esa URL en tu navegador para cargar cotizaciones.\n');
   // Sincronización SharePoint → SQLite en segundo plano
