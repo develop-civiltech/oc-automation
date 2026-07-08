@@ -290,6 +290,58 @@ El archivo `.env` y los datos locales no se modifican durante la actualización.
 
 ---
 
+## Despliegue en VPS con Docker
+
+A partir de julio 2026 el ERP se centraliza en un VPS Linux: una sola consola web accesible por navegador para todos los usuarios (ya no se ejecuta localmente en cada equipo), y el procesamiento automático de correos corre dentro de un contenedor con cron en vez de la Tarea Programada de Windows.
+
+`docker-compose.yml` define tres servicios que comparten la misma imagen (`Dockerfile`):
+
+| Servicio | Rol |
+|----------|-----|
+| `app` | Consola web (`src/servidor-cotizaciones.js`), una sola instancia. Las sesiones viven en SQLite, no en memoria, así que soporta múltiples usuarios concurrentes sin cambios. |
+| `mailer` | Ejecuta `node index.js` con **supercronic** según `deploy/crontab` — mismo horario que la Tarea Programada de Windows (L-V, cada 5 min, 6:00am–6:55pm hora de Colombia). |
+| `caddy` | Reverse proxy en los puertos 80/443. Sirve HTTP mientras no haya dominio propio; cuando llegue, basta con editar `deploy/Caddyfile` para obtener HTTPS automático (Let's Encrypt). |
+
+### Primer despliegue
+
+> **Importante:** llevar también el `data/local.db` existente del equipo central, no arrancar con un volumen vacío. `bootstrapAdmin()` y el registro de usuario en el login (`servidor-cotizaciones.js`) deciden si un usuario ya existe mirando el **caché SQLite local** (`localDb.countUsuarios()` / `getUsuarioByEmail()`), no la lista `UsuariosERP` de SharePoint real. Si el volumen arranca vacío, la primera vez que el servidor levante o que alguien haga login va a **crear un usuario/admin duplicado en SharePoint**, aunque ya exista. Copiando el `local.db` real se evita ese arranque en frío.
+
+```bash
+# 1. Copiar el .env Y el data/local.db reales del equipo central al VPS
+scp .env "usuario@vps:/ruta/oc-automation/.env"
+scp data/local.db "usuario@vps:/ruta/oc-automation/data/local.db"
+
+# 2. En el VPS, dentro de la carpeta del proyecto:
+docker compose build
+docker compose up -d
+
+# 3. Verificar
+docker compose logs -f app      # consola web
+docker compose logs -f mailer   # procesamiento de correos
+```
+
+El directorio `data/` (caché SQLite, incluye sesiones y consecutivos por proyecto) vive en el volumen nombrado `data` y persiste entre reinicios y actualizaciones.
+
+### Pendiente hasta tener dominio propio
+
+Microsoft OAuth exige `https://` en `AUTH_REDIRECT_URI` para dominios públicos (solo permite `http://localhost`), así que el login por internet no queda 100% operativo hasta ese momento. Mientras tanto se puede probar por túnel SSH (`ssh -L 3001:localhost:3001 usuario@vps`) o Tailscale, igual que en el modelo anterior. Cuando el dominio esté listo:
+
+1. Apuntar el registro DNS A del dominio a la IP del VPS.
+2. Editar `deploy/Caddyfile` reemplazando `:80` por el dominio (ver comentarios en el archivo).
+3. Actualizar `AUTH_REDIRECT_URI` en el `.env` del VPS a `https://<dominio>/auth/callback`.
+4. Registrar esa misma URL en Azure AD (App registration → Autenticación).
+5. `docker compose up -d` para aplicar los cambios.
+
+### Actualizaciones
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+---
+
 ## Estructura del proyecto
 
 ```

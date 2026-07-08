@@ -1,0 +1,34 @@
+# Dependencias (se instalan dentro de la imagen)
+node_modules/
+
+# Control de versiones
+.git/
+.gitignore
+
+# Secretos y config local
+.env
+.env.*
+!.env.example
+
+# Base de datos SQLite (runtime, vive en el volumen)
+data/local.db
+data/local.db-shm
+data/local.db-wal
+
+# Archivos temporales y logs
+logs/
+temp/
+*.log
+
+# Lanzadores y tareas específicas de Windows (no aplican dentro del contenedor)
+*.bat
+*.vbs
+*.ps1
+
+# Editor / IDE
+workspace.code-workspace
+.claude/
+_archivo/
+
+# Documentación (no hace falta en la imagen)
+*.md

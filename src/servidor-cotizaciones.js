@@ -18,6 +18,7 @@ require('dotenv').config();
 const http     = require('http');
 const fs       = require('fs');
 const path     = require('path');
+const crypto   = require('crypto');
 const { execSync } = require('child_process');
 
 const g          = require('./graphStorage');
@@ -1854,7 +1855,7 @@ const servidor = http.createServer(async (req, res) => {
         if (!['.xlsx', '.xls', '.pdf'].includes(ext)) {
           return json({ error: 'Formato no soportado. Sube Excel (.xlsx/.xls) o PDF del formato CT-ADMIN-FO-002.' }, 400);
         }
-        const tmpPath = path.join(TEMP_DIR, `req_${Date.now()}${ext}`);
+        const tmpPath = path.join(TEMP_DIR, `req_${Date.now()}_${crypto.randomUUID()}${ext}`);
         fs.writeFileSync(tmpPath, archivo.content);
 
         try {
@@ -2595,7 +2596,7 @@ const servidor = http.createServer(async (req, res) => {
 
         if (['.xlsx', '.xls', '.csv'].includes(ext)) {
           // Guardar temporalmente y leer como texto
-          const tmpPath = path.join(TEMP_DIR, `tmp_${Date.now()}${ext}`);
+          const tmpPath = path.join(TEMP_DIR, `tmp_${Date.now()}_${crypto.randomUUID()}${ext}`);
           fs.writeFileSync(tmpPath, archivo.content);
           try {
             const XLSX = require('xlsx');
@@ -2819,7 +2820,7 @@ const servidor = http.createServer(async (req, res) => {
         let datos    = archivo.content.toString('base64');
 
         if (['.xlsx', '.xls', '.csv'].includes(ext)) {
-          const tmpPath = path.join(TEMP_DIR, `tmp_os_${Date.now()}${ext}`);
+          const tmpPath = path.join(TEMP_DIR, `tmp_os_${Date.now()}_${crypto.randomUUID()}${ext}`);
           require('fs').writeFileSync(tmpPath, archivo.content);
           try {
             const XLSX = require('xlsx');
