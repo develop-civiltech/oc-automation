@@ -302,23 +302,43 @@ A partir de julio 2026 el ERP se centraliza en un VPS Linux: una sola consola we
 | `mailer` | Ejecuta `node index.js` con **supercronic** según `deploy/crontab` — mismo horario que la Tarea Programada de Windows (L-V, cada 5 min, 6:00am–6:55pm hora de Colombia). |
 | `caddy` | Reverse proxy en los puertos 80/443. Sirve HTTP mientras no haya dominio propio; cuando llegue, basta con editar `deploy/Caddyfile` para obtener HTTPS automático (Let's Encrypt). |
 
-### Primer despliegue
+### Requisitos del VPS
+
+- Un VPS Linux (Debian/Ubuntu recomendado) con acceso SSH.
+- **Docker Engine + plugin Compose** instalados. En Debian/Ubuntu, el script oficial es el camino más rápido:
+  ```bash
+  curl -fsSL https://get.docker.com | sudo sh
+  sudo usermod -aG docker $USER   # cerrar sesión y volver a entrar para que aplique
+  docker compose version          # confirma que el plugin quedó instalado
+  ```
+- Puertos **80 y 443** abiertos en el firewall del VPS (y en el panel del proveedor, si aplica) para que Caddy pueda servir la consola y, más adelante, emitir el certificado HTTPS.
+- Git (o alguna forma de subir el código, ej. `scp`/`rsync`) para llevar el repositorio al VPS.
+
+### Primer despliegue (dar de alta el sistema en el VPS)
 
 > **Importante:** llevar también el `data/local.db` existente del equipo central, no arrancar con un volumen vacío. `bootstrapAdmin()` y el registro de usuario en el login (`servidor-cotizaciones.js`) deciden si un usuario ya existe mirando el **caché SQLite local** (`localDb.countUsuarios()` / `getUsuarioByEmail()`), no la lista `UsuariosERP` de SharePoint real. Si el volumen arranca vacío, la primera vez que el servidor levante o que alguien haga login va a **crear un usuario/admin duplicado en SharePoint**, aunque ya exista. Copiando el `local.db` real se evita ese arranque en frío.
 
 ```bash
-# 1. Copiar el .env Y el data/local.db reales del equipo central al VPS
-scp .env "usuario@vps:/ruta/oc-automation/.env"
-scp data/local.db "usuario@vps:/ruta/oc-automation/data/local.db"
+# 1. Llevar el código al VPS (una sola vez)
+git clone <url-del-repositorio> oc-automation
+cd oc-automation
 
-# 2. En el VPS, dentro de la carpeta del proyecto:
+# 2. Copiar el .env Y el data/local.db reales del equipo central al VPS
+#    (ejecutar desde la máquina que sí los tiene, apuntando al VPS)
+scp .env           "usuario@vps:/ruta/oc-automation/.env"
+scp data/local.db  "usuario@vps:/ruta/oc-automation/data/local.db"
+
+# 3. Ya en el VPS, dentro de la carpeta del proyecto:
 docker compose build
 docker compose up -d
 
-# 3. Verificar
+# 4. Verificar
+docker compose ps
 docker compose logs -f app      # consola web
 docker compose logs -f mailer   # procesamiento de correos
 ```
+
+Con esto el sistema queda dado de alta: ya **no** hace falta instalar Node.js, Python, `npm install`, `iniciar-erp.bat` ni `instalar-tarea.ps1` en el VPS — todo vive dentro de los contenedores. Esos pasos (documentados en `INSTALACION.md`) solo aplican al modelo anterior de instalación local por equipo.
 
 El directorio `data/` (caché SQLite, incluye sesiones y consecutivos por proyecto) vive en el volumen nombrado `data` y persiste entre reinicios y actualizaciones.
 
