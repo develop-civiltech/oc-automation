@@ -86,9 +86,56 @@ sudo usermod -aG docker $USER   # cerrar sesión y volver a entrar para que apli
 docker compose version          # debe mostrar una versión, confirma que quedó instalado
 ```
 Abrir los puertos **80 y 443** en el firewall del VPS (y en el panel del proveedor si aplica) —
-por ahí sirve la consola el reverse proxy (`caddy`).
+por ahí sirve la consola el reverse proxy compartido.
 
-### Paso 2 — Llevar el código y la configuración al VPS
+### Paso 2 — Crear el reverse proxy compartido (`edge-proxy`)
+
+El reverse proxy (Caddy) no vive dentro del proyecto de oc-automation — es un mini-proyecto aparte
+en el VPS, `~/edge-proxy/`, pensado para ser compartido por **cualquier** app que se despliegue en
+ese servidor más adelante, no solo esta. Si ya existe en el VPS (porque ya se desplegó otra app ahí
+antes), saltar este paso. Si es la primera vez:
+
+```bash
+docker network create edge
+
+mkdir -p ~/edge-proxy && cd ~/edge-proxy
+cat > docker-compose.yml <<'EOF'
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+EOF
+
+cat > Caddyfile <<'EOF'
+:80 {
+	reverse_proxy oc-automation-app:3001
+}
+EOF
+
+docker compose up -d
+```
+
+Detalle completo (incluyendo cómo activar HTTPS con dominio propio y cómo agregar un proyecto
+nuevo más adelante) en `README.md`, sección **"Reverse proxy compartido (`edge-proxy`)"**.
+
+### Paso 3 — Llevar el código y la configuración al VPS
 
 ```bash
 # Clonar el repositorio en el VPS
@@ -114,23 +161,23 @@ sudo chown -R 10001:10001 data
 > —o el primer login— puede crear un usuario/admin **duplicado** en SharePoint. Llevar el
 > `local.db` ya poblado y darle el `chown` correcto evita ese arranque en frío.
 
-### Paso 3 — Levantar los servicios
+### Paso 4 — Levantar los servicios
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
-Esto levanta tres servicios (ver detalle en `README.md`):
-- `app` — la consola web (equivalente a `iniciar-erp.bat`, pero centralizada para todos).
+Esto levanta dos servicios (ver detalle en `README.md`):
+- `app` — la consola web (equivalente a `iniciar-erp.bat`, pero centralizada para todos). Se une
+  a la red `edge` creada en el Paso 2 para que el reverse proxy compartido la pueda alcanzar.
 - `mailer` — el procesamiento automático de correos (equivalente a la Tarea Programada de
   Windows / `instalar-tarea.ps1`), mismo horario laboral (L-V, 6:00am–6:55pm).
-- `caddy` — reverse proxy; sirve HTTP mientras no haya dominio propio.
 
-### Paso 4 — Verificar
+### Paso 5 — Verificar
 
 ```bash
-docker compose ps                # los 3 servicios deben verse "Up"
+docker compose ps                # los 2 servicios deben verse "Up"
 docker compose logs -f app       # confirma que conectó con SharePoint sin errores
 docker compose logs -f mailer    # confirma que el cron quedó programado
 ```
