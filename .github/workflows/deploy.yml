@@ -1,0 +1,31 @@
+name: Deploy a VPS
+
+on:
+  push:
+    branches:
+      - main
+
+# Evita que dos despliegues corran a la vez si llegan pushes seguidos
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Desplegar por SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            set -e
+            cd ${{ secrets.VPS_PATH }}
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose build
+            docker compose up -d
+            docker compose ps
