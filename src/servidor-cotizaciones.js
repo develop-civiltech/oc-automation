@@ -31,12 +31,13 @@ const localDb          = require('./db');
 const syncService      = require('./syncService');
 const auth             = require('./authService');
 
-// Sobreescribe cfg.firmante con el usuario local del .env si está definido.
+// Sobreescribe cfg.firmante con el usuario de la sesión activa.
 // La configuración de empresa (logo, emisor, IVA) sigue viniendo de SharePoint.
-function cfgConFirmante(cfg) {
-  const nombre = (process.env.USUARIO_NOMBRE || '').trim();
-  const cargo  = (process.env.USUARIO_CARGO  || '').trim();
+function cfgConFirmante(cfg, sesion) {
+  const nombre = (sesion?.nombre || '').trim();
   if (!nombre) return cfg;
+  const usuario = localDb.getUsuarioByEmail(sesion.email) || {};
+  const cargo = (usuario.cargo || '').trim();
   return { ...cfg, firmante: { nombre, cargo } };
 }
 
@@ -549,8 +550,8 @@ async function bootstrapAdmin() {
 
   const adminData = {
     email,
-    nombre: process.env.USUARIO_NOMBRE || email,
-    cargo:  process.env.USUARIO_CARGO  || 'Administrador',
+    nombre: email,
+    cargo:  'Administrador',
     rol:    'admin',
     activo: true,
   };
@@ -1118,7 +1119,7 @@ const servidor = http.createServer(async (req, res) => {
         }
       }
 
-      const sessionId = auth.createSession(email, usuario.nombre || nombre, usuario.rol);
+      const sessionId = auth.createSession(email, nombre, usuario.rol);
       res.writeHead(302, {
         'Set-Cookie': auth.buildSessionCookie(sessionId, AUTH_REDIRECT_URI),
         'Location':   '/',
@@ -1941,7 +1942,7 @@ const servidor = http.createServer(async (req, res) => {
     const [, reqId, fmt] = mRem;
     try {
       const rem = await remisionDesdeRequerimiento(reqId);
-      const cfg = cfgConFirmante(await configApp.getConfig());
+      const cfg = cfgConFirmante(await configApp.getConfig(), req._sesion);
       if (fmt === 'xlsx') {
         const buffer = await remisionTemplate.generarExcelBuffer(rem, cfg);
         res.writeHead(200, {
@@ -2050,7 +2051,7 @@ const servidor = http.createServer(async (req, res) => {
         alertas:              f.alertas || '',
         items,
       };
-      const cfg = cfgConFirmante(await configApp.getConfig());
+      const cfg = cfgConFirmante(await configApp.getConfig(), req._sesion);
       if (fmt === 'xlsx') {
         const buffer = await remisionTemplate.generarExcelBuffer(rem, cfg);
         res.writeHead(200, {
@@ -2243,7 +2244,7 @@ const servidor = http.createServer(async (req, res) => {
   if (req.method === 'GET' && mOcHtml) {
     try {
       const oc  = await ocDesdeSharePoint(mOcHtml[1]);
-      const cfg = cfgConFirmante(await configApp.getConfig());
+      const cfg = cfgConFirmante(await configApp.getConfig(), req._sesion);
       return html(ocTemplate.generarHTML(oc, cfg));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -2256,7 +2257,7 @@ const servidor = http.createServer(async (req, res) => {
   if (req.method === 'GET' && mOcXlsx) {
     try {
       const oc  = await ocDesdeSharePoint(mOcXlsx[1]);
-      const cfg = cfgConFirmante(await configApp.getConfig());
+      const cfg = cfgConFirmante(await configApp.getConfig(), req._sesion);
       const buffer = await ocTemplate.generarExcelBuffer(oc, cfg);
       res.writeHead(200, {
         'Content-Type':        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -2969,7 +2970,7 @@ FORMATO:
     req.on('end', async () => {
       try {
         const osData = JSON.parse(Buffer.concat(chunks).toString() || '{}');
-        const cfg = cfgConFirmante(await configApp.getConfig());
+        const cfg = cfgConFirmante(await configApp.getConfig(), req._sesion);
         const htmlStr = osTemplate.generarHTML(osData, cfg);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(htmlStr);
@@ -3104,7 +3105,7 @@ FORMATO:
       if (!ctx.OrdenesServicio) throw new Error('Lista OrdenesServicio no disponible');
       const item = await g.getListItem(ctx.siteId, ctx.OrdenesServicio, mOsHtml[1]);
       const os  = osDesdeFields(item);
-      const cfg = cfgConFirmante(await configApp.getConfig());
+      const cfg = cfgConFirmante(await configApp.getConfig(), req._sesion);
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(osTemplate.generarHTML(os, cfg));
     } catch (err) {
@@ -3122,7 +3123,7 @@ FORMATO:
       if (!ctx.OrdenesServicio) throw new Error('Lista OrdenesServicio no disponible');
       const item  = await g.getListItem(ctx.siteId, ctx.OrdenesServicio, mOsXlsx[1]);
       const os    = osDesdeFields(item);
-      const cfg   = cfgConFirmante(await configApp.getConfig());
+      const cfg   = cfgConFirmante(await configApp.getConfig(), req._sesion);
       const buffer = await osTemplate.generarExcelBuffer(os, cfg);
       res.writeHead(200, {
         'Content-Type':        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

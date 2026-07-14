@@ -1518,7 +1518,11 @@ async function cargarUsuariosAdmin(){
       <tr>
         <td class="mono" style="font-size:11px">${esc(u.email)}</td>
         <td>${esc(u.nombre || '')}</td>
-        <td>${esc(u.cargo  || '')}</td>
+        <td>
+          <input class="td-input" style="border:1px solid var(--border);padding:4px 8px;font-size:11px;width:100%"
+            value="${esc(u.cargo || '')}"
+            onchange="patchUsuario('${esc(u.sp_id)}','cargo',this.value)">
+        </td>
         <td>
           <select class="td-input" style="border:1px solid var(--border);padding:4px 8px;font-size:11px"
             onchange="patchUsuario('${esc(u.sp_id)}','rol',this.value)">

@@ -244,8 +244,10 @@ Lo que **sí debe quedar** en la copia maestra:
    - [x] `excluir-actualizar.txt` — archivo de soporte para las actualizaciones
 
 > **Nota sobre el `.env`:** Las credenciales de Azure, SharePoint y Gemini son las mismas
-> para todos los equipos. El nuevo usuario solo debe editar estos tres campos personales:
-> `USUARIO_EMAIL`, `USUARIO_NOMBRE` y `OUTPUT_DIR` (ruta de salida local).
+> para todos los equipos. El nuevo usuario solo debe editar estos dos campos personales:
+> `USUARIO_EMAIL` y `OUTPUT_DIR` (ruta de salida local). El nombre del firmante sale
+> automáticamente del login de Microsoft, y el cargo se edita luego en el panel de
+> usuarios (`/usuarios`) dentro de la consola.
 > `PYTHON_PATH` solo si la verificación del Paso 4 lo indica.
 
 ---
@@ -282,13 +284,16 @@ corporativas completas. Solo es necesario editar los campos personales:
 
 ```
 USUARIO_EMAIL=correo@civiltechic.com     ← reemplazar con el correo propio
-USUARIO_NOMBRE=Nombre Apellido           ← reemplazar con el nombre propio
-USUARIO_CARGO=Cargo del firmante         ← aparece al pie de OCs, OSs y remisiones
 OUTPUT_DIR=C:\OC-Automation\output\      ← ajustar si la carpeta es diferente
 ```
 
 El resto de valores (credenciales Azure, SharePoint, Gemini) ya están correctos
 y no deben modificarse.
+
+El nombre que aparece como firmante en OCs, OSs y remisiones se toma
+automáticamente del login de Microsoft (no requiere configuración). El cargo
+se edita luego, dentro de la consola, en el panel de usuarios (`/usuarios`) —
+solo un admin puede hacerlo.
 
 ### Paso 4 — Verificar la instalación
 
