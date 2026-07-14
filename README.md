@@ -168,10 +168,10 @@ SHAREPOINT_SITE_PATH=/sites/NombreSitio
 # ── Buzón de requerimientos ───────────────────────────────────────────────────
 MAILBOX=abastecimiento@civiltechic.com
 
-# ── Identificación del usuario (firma de documentos y auditoría) ──────────────
+# ── Identificación del usuario (bootstrap del admin inicial) ──────────────────
 USUARIO_EMAIL=correo@civiltechic.com        # ← PERSONALIZAR (será admin la primera vez)
-USUARIO_NOMBRE=Nombre Apellido              # ← PERSONALIZAR
-USUARIO_CARGO=Cargo del firmante            # ← PERSONALIZAR
+# El nombre del firmante sale del login de Microsoft y el cargo se edita
+# después en el panel de usuarios (/usuarios).
 
 # ── Autenticación OAuth 2.0 ──────────────────────────────────────────────────
 # Para desarrollo local:
