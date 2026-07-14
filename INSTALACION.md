@@ -11,6 +11,13 @@ requerimientos desde equipos distintos sin necesidad de sincronizar nada manualm
 - El equipo central (Brayan) procesa automáticamente los correos de requerimiento.
 - Los demás equipos solo acceden a la consola web para revisar y aprobar OCs/OS.
 
+> **A partir de julio 2026 existe una segunda forma de dar de alta el sistema: con Docker en un
+> VPS Linux**, centralizando la consola web y el procesamiento de correos en un solo servidor
+> para todos los usuarios (en vez de instalar el software en cada equipo Windows). Si vas a montar
+> el sistema así, salta directo a [Alta del sistema con Docker (VPS Linux)](#alta-del-sistema-con-docker-vps-linux);
+> el resto de esta guía (Node.js/Python, copia maestra en OneDrive, `iniciar-erp.bat`, etc.)
+> aplica solo a la instalación local por equipo Windows.
+
 ---
 
 ## Base de datos en la nube
@@ -50,6 +57,155 @@ Antes de comenzar, instalar en el equipo nuevo:
   pip install openpyxl
   ```
 - Verificar: `python --version` → debe mostrar Python 3.x.x
+
+---
+
+## Alta del sistema con Docker (VPS Linux)
+
+Este método reemplaza toda la sección de instalación local por equipo (Node.js, Python, copia
+maestra en OneDrive, `iniciar-erp.bat`, `instalar-tarea.ps1`): en vez de eso, se levanta **una sola
+vez** en un servidor VPS y todos los usuarios acceden por navegador. El detalle técnico completo
+(arquitectura de contenedores, qué hace cada servicio, cómo activar HTTPS cuando haya dominio
+propio) está en el `README.md`, sección **"Despliegue en VPS con Docker"** — aquí va el checklist
+de alta paso a paso.
+
+### Qué se necesita antes de empezar
+
+- Un VPS Linux (Debian/Ubuntu) con acceso SSH.
+- El `.env` real con las credenciales corporativas (Azure, SharePoint, Gemini) — el mismo que ya
+  usa el equipo central, no se crea uno nuevo.
+- El archivo `data/local.db` del equipo central (caché SQLite con usuarios y consecutivos). Es
+  importante llevarlo también, no solo el `.env` — más abajo se explica por qué.
+
+### Paso 1 — Instalar Docker en el VPS
+
+Por SSH, en el VPS:
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER   # cerrar sesión y volver a entrar para que aplique
+docker compose version          # debe mostrar una versión, confirma que quedó instalado
+```
+Abrir los puertos **80 y 443** en el firewall del VPS (y en el panel del proveedor si aplica) —
+por ahí sirve la consola el reverse proxy compartido.
+
+### Paso 2 — Crear el reverse proxy compartido (`edge-proxy`)
+
+El reverse proxy (Caddy) no vive dentro del proyecto de oc-automation — es un mini-proyecto aparte
+en el VPS, `~/edge-proxy/`, pensado para ser compartido por **cualquier** app que se despliegue en
+ese servidor más adelante, no solo esta. Si ya existe en el VPS (porque ya se desplegó otra app ahí
+antes), saltar este paso. Si es la primera vez:
+
+```bash
+docker network create edge
+
+mkdir -p ~/edge-proxy && cd ~/edge-proxy
+cat > docker-compose.yml <<'EOF'
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+EOF
+
+cat > Caddyfile <<'EOF'
+:80 {
+	reverse_proxy oc-automation-app:3001
+}
+EOF
+
+docker compose up -d
+```
+
+Detalle completo (incluyendo cómo activar HTTPS con dominio propio y cómo agregar un proyecto
+nuevo más adelante) en `README.md`, sección **"Reverse proxy compartido (`edge-proxy`)"**.
+
+### Paso 3 — Llevar el código y la configuración al VPS
+
+```bash
+# Clonar el repositorio en el VPS
+git clone <url-del-repositorio> oc-automation
+cd oc-automation
+
+# Desde el equipo que sí tiene el .env y el local.db reales, copiarlos al VPS:
+scp .env           usuario@vps:/ruta/oc-automation/.env
+scp data/local.db  usuario@vps:/ruta/oc-automation/data/local.db
+```
+
+Ya en el VPS, dar permisos de escritura al usuario del contenedor (corre con UID/GID fijo `10001`,
+no como root):
+```bash
+sudo chown -R 10001:10001 data
+```
+
+> **Por qué copiar también `data/local.db` y ajustar permisos:** el código decide si un usuario ya
+> existe (para no crear un admin duplicado al primer arranque) consultando el **caché SQLite
+> local**, no la lista `UsuariosERP` de SharePoint directamente. La carpeta `data/` se monta
+> directo desde el proyecto (`./data:/app/data`) — no es un volumen aparte — así que si arranca sin
+> `local.db`, o el contenedor no puede escribir ahí por permisos, el primer arranque del servidor
+> —o el primer login— puede crear un usuario/admin **duplicado** en SharePoint. Llevar el
+> `local.db` ya poblado y darle el `chown` correcto evita ese arranque en frío.
+
+### Paso 4 — Levantar los servicios
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Esto levanta dos servicios (ver detalle en `README.md`):
+- `app` — la consola web (equivalente a `iniciar-erp.bat`, pero centralizada para todos). Se une
+  a la red `edge` creada en el Paso 2 para que el reverse proxy compartido la pueda alcanzar.
+- `mailer` — el procesamiento automático de correos (equivalente a la Tarea Programada de
+  Windows / `instalar-tarea.ps1`), mismo horario laboral (L-V, 6:00am–6:55pm).
+
+### Paso 5 — Verificar
+
+```bash
+docker compose ps                # los 2 servicios deben verse "Up"
+docker compose logs -f app       # confirma que conectó con SharePoint sin errores
+docker compose logs -f mailer    # confirma que el cron quedó programado
+```
+
+Abrir `http://<IP-del-VPS>/` en el navegador — debe cargar la consola.
+
+> **Login por internet:** Microsoft OAuth exige `https://` en la URL de redirect para dominios
+> públicos (solo permite `http://localhost`), así que el login completo no queda operativo hasta
+> tener un dominio propio apuntando al VPS. Mientras tanto se puede probar por túnel SSH
+> (`ssh -L 3001:localhost:3001 usuario@vps`) o Tailscale. El procedimiento para activar el dominio
+> y HTTPS está documentado en el `README.md`.
+
+### Qué ya NO aplica en este modelo
+
+- Instalar Node.js o Python en el servidor — quedan dentro de la imagen de Docker.
+- La copia maestra en OneDrive, `iniciar-erp.bat`, `actualizar.bat`, `instalar-tarea.ps1` — son
+  del modelo de instalación local por equipo Windows.
+- Que cada usuario tenga su propia instancia — ahora todos comparten la misma consola en el VPS.
+
+### Actualizar el sistema (modelo Docker)
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+El `.env` y el volumen de datos (`data/`) no se tocan durante la actualización.
 
 ---
 
