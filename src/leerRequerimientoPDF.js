@@ -10,7 +10,7 @@ const fs    = require('fs');
 const https = require('https');
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
-const MODELO     = 'gemini-2.5-flash';
+const MODELO     = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
 const PROMPT = `Este PDF es el formato oficial de SOLICITUD DE REQUERIMIENTO (CT-ADMIN-FO-002) de Civiltech.
 Extrae la información y devuelve SOLO un JSON (sin markdown, sin comentarios) con esta estructura EXACTA:

@@ -609,6 +609,7 @@ const PATH_COMPRAS = process.env.PATH_COMPRAS     || path.join(__dirname, '../da
 const PATH_PROV    = process.env.PATH_PROVEEDORES || path.join(__dirname, '../data/proveedores_depurados_final.csv');
 const PATH_PROY    = process.env.PATH_PROYECTOS   || path.join(__dirname, '../data/tabla_proyectos.csv');
 const GEMINI_KEY   = process.env.GEMINI_API_KEY || '';
+const MODELO_GEMINI = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const TEMP_DIR     = path.join(__dirname, '../temp/cotizaciones');
 const AUTH_REDIRECT_URI = process.env.AUTH_REDIRECT_URI || `http://localhost:${PORT}/auth/callback`;
 
@@ -708,7 +709,7 @@ function parsearJSONGemini(str) {
 async function extraerConGemini(contenidoBase64, mimeType, nombreArchivo) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada en .env');
 
-  const MODELO = 'gemini-2.5-flash';
+  const MODELO = MODELO_GEMINI;
   const URL    = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_KEY}`;
 
   const PROMPT = `Analiza este documento de cotización y extrae TODOS los ítems cotizados.
@@ -786,7 +787,7 @@ ${PROMPT}` }
 
 async function geminiTexto(prompt, timeoutMs = 5000, extraConfig = {}) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada en .env');
-  const MODELO = 'gemini-2.5-flash';
+  const MODELO = MODELO_GEMINI;
   const URL    = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_KEY}`;
   const bodyStr = JSON.stringify({
     contents: [{ parts: [{ text: prompt }] }],
@@ -2836,7 +2837,7 @@ const servidor = http.createServer(async (req, res) => {
         }
 
         if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada en .env');
-        const MODELO = 'gemini-2.5-flash';
+        const MODELO = MODELO_GEMINI;
         const GURL   = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_KEY}`;
 
         const PROMPT = `Analiza este documento que es una cotización o propuesta económica de servicios.
