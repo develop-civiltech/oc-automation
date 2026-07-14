@@ -2,6 +2,7 @@ services:
   app:
     build: .
     image: oc-automation:latest
+    container_name: oc-automation-app
     env_file: .env
     environment:
       - TZ=America/Bogota
@@ -9,6 +10,8 @@ services:
       - ./data:/app/data
     expose:
       - "3001"
+    networks:
+      - edge
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3001/"]
@@ -38,19 +41,6 @@ services:
         max-size: "10m"
         max-file: "5"
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - app
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  edge:
+    external: true

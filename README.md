@@ -294,13 +294,19 @@ El archivo `.env` y los datos locales no se modifican durante la actualización.
 
 A partir de julio 2026 el ERP se centraliza en un VPS Linux: una sola consola web accesible por navegador para todos los usuarios (ya no se ejecuta localmente en cada equipo), y el procesamiento automático de correos corre dentro de un contenedor con cron en vez de la Tarea Programada de Windows.
 
-`docker-compose.yml` define tres servicios que comparten la misma imagen (`Dockerfile`):
+`docker-compose.yml` define dos servicios que comparten la misma imagen (`Dockerfile`):
 
 | Servicio | Rol |
 |----------|-----|
 | `app` | Consola web (`src/servidor-cotizaciones.js`), una sola instancia. Las sesiones viven en SQLite, no en memoria, así que soporta múltiples usuarios concurrentes sin cambios. |
 | `mailer` | Ejecuta `node index.js` con **supercronic** según `deploy/crontab` — mismo horario que la Tarea Programada de Windows (L-V, cada 5 min, 6:00am–6:55pm hora de Colombia). |
-| `caddy` | Reverse proxy en los puertos 80/443. Sirve HTTP mientras no haya dominio propio; cuando llegue, basta con editar `deploy/Caddyfile` para obtener HTTPS automático (Let's Encrypt). |
+
+**El reverse proxy (Caddy) NO vive en este repositorio.** Es un proyecto aparte en el VPS,
+`~/edge-proxy/`, compartido por todas las apps que se desplieguen ahí (no solo oc-automation) —
+ver la sección [Reverse proxy compartido (`edge-proxy`)](#reverse-proxy-compartido-edge-proxy) más
+abajo para el detalle y el por qué. `app` solo se une a la red externa `edge` (declarada al final
+de `docker-compose.yml`) para que ese Caddy compartido lo pueda alcanzar; no publica ningún puerto
+al VPS directamente.
 
 ### Requisitos del VPS
 
@@ -311,8 +317,10 @@ A partir de julio 2026 el ERP se centraliza en un VPS Linux: una sola consola we
   sudo usermod -aG docker $USER   # cerrar sesión y volver a entrar para que aplique
   docker compose version          # confirma que el plugin quedó instalado
   ```
-- Puertos **80 y 443** abiertos en el firewall del VPS (y en el panel del proveedor, si aplica) para que Caddy pueda servir la consola y, más adelante, emitir el certificado HTTPS.
+- Puertos **80 y 443** abiertos en el firewall del VPS (y en el panel del proveedor, si aplica) para que el Caddy compartido pueda servir la consola y, más adelante, emitir el certificado HTTPS.
 - Git (o alguna forma de subir el código, ej. `scp`/`rsync`) para llevar el repositorio al VPS.
+- El reverse proxy compartido (`~/edge-proxy/`) ya levantado — ver la sección de más abajo. Si es
+  el primer proyecto que se despliega en ese VPS, hay que crearlo antes del primer despliegue.
 
 ### Primer despliegue (dar de alta el sistema en el VPS)
 
@@ -321,6 +329,9 @@ A partir de julio 2026 el ERP se centraliza en un VPS Linux: una sola consola we
 > `data/` se monta directo desde la carpeta del proyecto en el VPS (`./data:/app/data`, ver `docker-compose.yml`) — no es un volumen aparte, así que lo que copies ahí con `scp` es exactamente lo que va a usar el contenedor. El contenedor corre con un usuario de sistema fijo (UID/GID `10001`), por eso el `chown` del paso 2 es necesario: sin él, Docker no puede escribir `local.db` en esa carpeta.
 
 ```bash
+# 0. Si el reverse proxy compartido (~/edge-proxy/) todavía no existe en este VPS, crearlo
+#    primero -- ver la sección "Reverse proxy compartido (edge-proxy)" más abajo.
+
 # 1. Llevar el código al VPS (una sola vez)
 git clone <url-del-repositorio> oc-automation
 cd oc-automation
@@ -345,17 +356,85 @@ docker compose logs -f mailer   # procesamiento de correos
 
 Con esto el sistema queda dado de alta: ya **no** hace falta instalar Node.js, Python, `npm install`, `iniciar-erp.bat` ni `instalar-tarea.ps1` en el VPS — todo vive dentro de los contenedores. Esos pasos (documentados en `INSTALACION.md`) solo aplican al modelo anterior de instalación local por equipo.
 
-El directorio `data/` (caché SQLite, incluye sesiones y consecutivos por proyecto) vive en el volumen nombrado `data` y persiste entre reinicios y actualizaciones.
+El directorio `data/` (caché SQLite, incluye sesiones y consecutivos por proyecto) se monta directo desde la carpeta del proyecto en el VPS (bind mount, no un volumen aparte) y persiste entre reinicios y actualizaciones mientras no se borre esa carpeta.
+
+### Reverse proxy compartido (`edge-proxy`)
+
+Caddy no corre dentro de este `docker-compose.yml` — es un proyecto aparte en el VPS,
+`~/edge-proxy/`, que es el único dueño de los puertos 80/443 **de todo el servidor**, no solo de
+oc-automation. La razón: si el día de mañana se despliega otra app en el mismo VPS, esa app no
+podría publicar su propio proxy en 80/443 — ya estarían tomados. Con un proxy compartido, cada app
+nueva solo se conecta a la misma red y agrega un bloque al `Caddyfile` compartido, sin pelear por
+puertos ni tocar código de nadie.
+
+**Crear el proxy compartido (una sola vez por VPS, si no existe todavía):**
+```bash
+docker network create edge
+
+mkdir -p ~/edge-proxy && cd ~/edge-proxy
+cat > docker-compose.yml <<'EOF'
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+EOF
+
+cat > Caddyfile <<'EOF'
+# oc-automation -- mientras no haya dominio propio, sirve HTTP plano en el puerto 80.
+:80 {
+	reverse_proxy oc-automation-app:3001
+}
+
+# Cuando oc-automation tenga dominio propio, reemplazar el bloque anterior por:
+#   erp.civiltechic.com {
+#       reverse_proxy oc-automation-app:3001
+#   }
+
+# Próximo proyecto en este VPS -- agregar aquí un bloque nuevo, ej.:
+#   otro-dominio.com {
+#       reverse_proxy <container_name-del-otro-proyecto>:<puerto>
+#   }
+EOF
+
+docker compose up -d
+```
+
+`oc-automation-app` en el `Caddyfile` es el `container_name` fijo del servicio `app` de este
+repo (ver `docker-compose.yml`) — por eso Caddy lo puede alcanzar por nombre aunque viva en otro
+proyecto de Compose, siempre que ambos estén conectados a la misma red `edge`.
+
+**Para agregar un proyecto nuevo más adelante:** en el `docker-compose.yml` de ese proyecto,
+ponerle `container_name` fijo a su servicio web, unirlo a la red externa `edge` (mismo patrón que
+`app` en este repo), y agregar su bloque correspondiente en `~/edge-proxy/Caddyfile`. Después
+`docker compose up -d` en el proyecto nuevo y `docker compose restart` en `~/edge-proxy/` para que
+Caddy recargue el archivo.
 
 ### Pendiente hasta tener dominio propio
 
 Microsoft OAuth exige `https://` en `AUTH_REDIRECT_URI` para dominios públicos (solo permite `http://localhost`), así que el login por internet no queda 100% operativo hasta ese momento. Mientras tanto se puede probar por túnel SSH (`ssh -L 3001:localhost:3001 usuario@vps`) o Tailscale, igual que en el modelo anterior. Cuando el dominio esté listo:
 
 1. Apuntar el registro DNS A del dominio a la IP del VPS.
-2. Editar `deploy/Caddyfile` reemplazando `:80` por el dominio (ver comentarios en el archivo).
-3. Actualizar `AUTH_REDIRECT_URI` en el `.env` del VPS a `https://<dominio>/auth/callback`.
+2. Editar `~/edge-proxy/Caddyfile` reemplazando el bloque `:80` de oc-automation por el dominio (ver comentarios en el archivo) y `docker compose restart` en `~/edge-proxy/`.
+3. Actualizar `AUTH_REDIRECT_URI` en el `.env` de oc-automation en el VPS a `https://<dominio>/auth/callback`.
 4. Registrar esa misma URL en Azure AD (App registration → Autenticación).
-5. `docker compose up -d` para aplicar los cambios.
+5. `docker compose up -d` en `~/oc-automation/` para aplicar el cambio del `.env`.
 
 ### Actualizaciones
 
