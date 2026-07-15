@@ -842,6 +842,12 @@ function osDesdeFields(item) {
     condicionesComerciales: f.condicionesComerciales || '',
     observaciones:          f.observaciones || '',
     tipoGasto:              f.tipoGasto || '',
+    pagado:                 !!f.pagado,
+    pagadoPor:              f.pagadoPor || '',
+    fechaPago:              f.fechaPago ? new Date(f.fechaPago).toLocaleDateString('es-CO') : '',
+    cumplido:               !!f.cumplido,
+    cumplidoPor:            f.cumplidoPor || '',
+    fechaCumplido:          f.fechaCumplido ? new Date(f.fechaCumplido).toLocaleDateString('es-CO') : '',
   };
 }
 
@@ -3075,11 +3081,15 @@ FORMATO:
         'IVA':               Number(o.iva || 0),
         'Total':             Number(o.total || 0),
         'Estado':            o.estado || '',
+        'Pago':              o.estado === 'borrador' ? '' : (o.pagado ? 'Pagada' : 'Pendiente'),
+        'Fecha pago':        o.fechaPago || '',
+        'Fecha cumplido':    o.fechaCumplido || '',
       }));
       const ws = XLSX.utils.json_to_sheet(data);
       ws['!cols'] = [
         {wch:14},{wch:12},{wch:16},{wch:30},{wch:14},{wch:35},
         {wch:14},{wch:20},{wch:12},{wch:12},{wch:14},{wch:14},{wch:14},{wch:12},
+        {wch:12},{wch:14},{wch:14},
       ];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Registro OSs');
@@ -3138,7 +3148,7 @@ FORMATO:
   }
 
   // ── OS: aprobar / anular ──────────────────────────────────────────────────────
-  const mOsAccion = url.match(/^\/os\/(\w+)\/(aprobar|anular)$/);
+  const mOsAccion = url.match(/^\/os\/(\w+)\/(aprobar|anular|pagar|cumplir)$/);
   if (req.method === 'POST' && mOsAccion) {
     const [, osId, accion] = mOsAccion;
     const chunks = [];
@@ -3164,10 +3174,64 @@ FORMATO:
           cambios.anuladoPor      = usuario;
           cambios.fechaAnulacion  = now;
           cambios.motivoAnulacion = String(body.motivo || '').trim();
+        } else if (accion === 'pagar') {
+          cambios.pagado     = true;
+          cambios.pagadoPor  = usuario;
+          cambios.fechaPago  = now;
+        } else if (accion === 'cumplir') {
+          cambios.cumplido      = true;
+          cambios.cumplidoPor   = usuario;
+          cambios.fechaCumplido = now;
+        }
+
+        // Auto-finalizar: si tras este cambio quedan pago + cumplido completos → 'finalizada'
+        if (accion === 'pagar' || accion === 'cumplir') {
+          const actual = await g.getListItem(ctx.siteId, ctx.OrdenesServicio, osId);
+          const f = actual.fields || {};
+          const pagado   = accion === 'pagar'   ? true : !!f.pagado;
+          const cumplido = accion === 'cumplir' ? true : !!f.cumplido;
+          if (pagado && cumplido && f.estado === 'aprobada') {
+            cambios.estado = 'finalizada';
+          }
         }
 
         const actualizado = await g.updateListItem(ctx.siteId, ctx.OrdenesServicio, osId, cambios);
         if (actualizado?.id) localDb.upsertDocumento('ordenes_servicio', actualizado);
+
+        // Al aprobar → registrar la OS como gasto en Control de Costos (async, no bloquea)
+        if (accion === 'aprobar') {
+          const os = actualizado?.fields || {};
+          (async () => {
+            try {
+              await cc.registrarGasto({
+                fechaOC:         (os.fechaCreacion || now).slice(0, 10),
+                numeroOC:        os.numeroOS,          proyecto:        os.proyecto,
+                proveedorNit:    os.proveedorNit,      proveedorNombre: os.proveedorNombre,
+                tipoGasto:       os.tipoGasto || '',   subtotal:        os.valor,
+                iva:             os.iva,               total:           os.total,
+                estado:          'aprobada',           fechaAprobacion: now.slice(0, 10),
+                creadoPor:       usuario,
+              });
+              console.log(`[OS ${os.numeroOS}] gasto registrado en Control Costos`);
+            } catch (e) { console.warn('No se pudo registrar OS en Control Costos:', e.message); }
+          })();
+        }
+
+        // Al pagar/cumplir → actualizar fecha en la fila de Control de Costos (async)
+        if (accion === 'pagar' || accion === 'cumplir') {
+          (async () => {
+            try {
+              const numOS = (actualizado.fields || {}).numeroOS;
+              if (numOS) {
+                const c = {};
+                if (accion === 'pagar')   c.fechaPago    = now.slice(0, 10);
+                if (accion === 'cumplir') c.fechaEntrega = now.slice(0, 10);
+                await cc.actualizarFila(numOS, c);
+              }
+            } catch (e) { console.warn('No se pudo actualizar Control Costos (OS):', e.message); }
+          })();
+        }
+
         json({ ok: true, numeroOS: actualizado?.fields?.numeroOS || cambios.numeroOS || '' });
       } catch (err) { json({ error: err.message }, 500); }
     });
