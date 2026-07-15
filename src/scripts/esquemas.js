@@ -247,6 +247,12 @@ const OrdenesServicio = {
     { name: 'aiuI',                       number: { decimalPlaces: 'two' } },
     { name: 'aiuU',                       number: { decimalPlaces: 'two' } },
     { name: 'tipoGasto',                  text: { maxLength: 100 } },
+    { name: 'pagado',                     boolean: {} },
+    { name: 'pagadoPor',                  text: { maxLength: 200 } },
+    { name: 'fechaPago',                  dateTime: {} },
+    { name: 'cumplido',                   boolean: {} },
+    { name: 'cumplidoPor',                text: { maxLength: 200 } },
+    { name: 'fechaCumplido',              dateTime: {} },
   ],
 };
 
