@@ -758,8 +758,9 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
           <th>Servicio</th>
           <th style="text-align:right">Total</th>
           <th>Estado</th>
+          <th>Pago</th>
         </tr></thead>
-        <tbody id="tbody-os"><tr><td colspan="7" style="text-align:center;color:var(--txt-2);padding:32px">Cargando…</td></tr></tbody>
+        <tbody id="tbody-os"><tr><td colspan="8" style="text-align:center;color:var(--txt-2);padding:32px">Cargando…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -1605,7 +1606,7 @@ function renderOrdenesServicio() {
   if ($('#os-stats-borrador'))  $('#os-stats-borrador').textContent  = `${osBase.filter(o => o.estado === 'borrador').length} Borradores`;
 
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--txt-2);padding:32px">No hay órdenes de servicio${estado ? ' en estado "' + estado + '"' : ''}.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--txt-2);padding:32px">No hay órdenes de servicio${estado ? ' en estado "' + estado + '"' : ''}.</td></tr>`;
     return;
   }
   tbody.innerHTML = lista.map(o => `
@@ -1617,6 +1618,7 @@ function renderOrdenesServicio() {
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o.tipoServicio || '')}">${esc((o.tipoServicio || '').substring(0, 60))}${(o.tipoServicio || '').length > 60 ? '…' : ''}</td>
       <td style="text-align:right" class="mono">${fmt$(o.total)}</td>
       <td><span class="tag tag-${esc(o.estado || 'borrador')}">${capFirst(o.estado || 'borrador')}</span></td>
+      <td>${o.estado === 'borrador' ? '<span style="color:var(--txt-2)">—</span>' : (o.pagado ? '<span class="tag tag-pagada">✓ Pagada</span>' : '<span class="tag tag-borrador">Pendiente</span>')}</td>
     </tr>`).join('');
 }
 
@@ -1629,6 +1631,8 @@ function verOS(id) {
   const puedeEditar = os.estado === 'borrador';
   const puedeAprobar = os.estado === 'borrador';
   const puedeAnular = os.estado !== 'anulada' && os.estado !== 'finalizada';
+  const puedePagar = os.estado === 'aprobada' && !os.pagado;
+  const puedeCumplir = os.estado === 'aprobada' && !os.cumplido;
 
   const thS = 'padding:6px 8px;font-weight:600;color:var(--txt-2);font-size:11px;border-bottom:1px solid var(--border)';
   const itemsRows = (os.items || []).map((it, i) => {
@@ -1692,12 +1696,25 @@ function verOS(id) {
         </table>
       </div>` : ''}
       ${resumenCostos}
+      ${os.estado !== 'borrador' ? `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;font-size:13px">
+        <div>
+          <span style="color:var(--txt-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Pago</span>
+          <div style="margin-top:4px">${os.pagado ? '<span class="tag tag-pagada">✓ Pagada</span>' : '<span class="tag tag-borrador">Pendiente</span>'}</div>
+        </div>
+        <div>
+          <span style="color:var(--txt-2);font-size:11px;text-transform:uppercase;letter-spacing:.05em">Cumplido</span>
+          <div style="margin-top:4px">${os.cumplido ? '<span class="tag tag-entregada">✓ Cumplida</span>' : '<span class="tag tag-borrador">Pendiente</span>'}</div>
+        </div>
+      </div>` : ''}
       <div class="modal-actions">
         <button class="btn btn-ghost" id="os-ver-cerrar">Cerrar</button>
         <a class="btn btn-ghost" href="/os/${esc(os.id)}/xlsx">Excel</a>
         <a class="btn btn-ghost" href="/os/${esc(os.id)}/html" target="_blank">PDF</a>
         ${puedeAnular  ? `<button class="btn btn-danger btn-sm"  id="os-ver-anular">Anular</button>` : ''}
         ${puedeEditar  ? `<button class="btn btn-ghost btn-sm"   id="os-ver-editar">Editar borrador</button>` : ''}
+        ${puedePagar   ? `<button class="btn btn-primary"        id="os-ver-pagar">Pagada</button>` : ''}
+        ${puedeCumplir ? `<button class="btn btn-primary"        id="os-ver-cumplir">Cumplida</button>` : ''}
         ${puedeAprobar ? `<button class="btn btn-success"        id="os-ver-aprobar">Aprobar</button>` : ''}
       </div>
     </div>`;
@@ -1707,9 +1724,13 @@ function verOS(id) {
   const bAnular  = wrap.querySelector('#os-ver-anular');
   const bEditar  = wrap.querySelector('#os-ver-editar');
   const bAprobar = wrap.querySelector('#os-ver-aprobar');
+  const bPagar   = wrap.querySelector('#os-ver-pagar');
+  const bCumplir = wrap.querySelector('#os-ver-cumplir');
   if (bAnular)  bAnular.onclick  = () => { wrap.remove(); anularOS(id); };
   if (bEditar)  bEditar.onclick  = () => { wrap.remove(); editarOSModal(id); };
   if (bAprobar) bAprobar.onclick = () => { wrap.remove(); aprobarOS(id); };
+  if (bPagar)   bPagar.onclick   = () => { wrap.remove(); pagarOS(id); };
+  if (bCumplir) bCumplir.onclick = () => { wrap.remove(); cumplirOS(id); };
 }
 
 // ─── OS: edición de borrador ──────────────────────────────────────────────────
@@ -1885,6 +1906,26 @@ async function anularOS(id) {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Error al anular');
+    await cargarOrdenesServicio();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function pagarOS(id) {
+  if (!confirm('¿Marcar esta Orden de Servicio como pagada?')) return;
+  try {
+    const r = await fetch(`/os/${id}/pagar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Error al marcar como pagada');
+    await cargarOrdenesServicio();
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function cumplirOS(id) {
+  if (!confirm('¿Marcar esta Orden de Servicio como cumplida?')) return;
+  try {
+    const r = await fetch(`/os/${id}/cumplir`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Error al marcar como cumplida');
     await cargarOrdenesServicio();
   } catch (e) { alert('Error: ' + e.message); }
 }
