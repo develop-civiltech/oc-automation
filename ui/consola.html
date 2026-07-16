@@ -4044,6 +4044,9 @@ async function accionOCEntregar(id) {
         : `OC marcada como entregada.\nEntrada de inventario registrada. Recuerda registrar la salida cuando consumas los materiales.`;
       alert(msg);
     }
+    if (data.remisionGenerada) {
+      alert(`✓ Remisión ${data.remisionGenerada.numero} generada automáticamente para esta OC.`);
+    }
   } catch(e) {
     alert('Error: ' + e.message);
   } finally {
