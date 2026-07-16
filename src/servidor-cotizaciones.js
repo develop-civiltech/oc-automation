@@ -193,6 +193,37 @@ async function remisionDesdeOCs(ocIds, extra = {}) {
   };
 }
 
+// Arma la remisión (remisionDesdeOCs), le asigna consecutivo y la guarda en
+// SharePoint + SQLite. Reutilizada por POST /remisiones y por la generación
+// automática al marcar una OC como entregada.
+async function crearRemisionYGuardar(ctx, ocIds, extra, usuario) {
+  const rem = await remisionDesdeOCs(ocIds, extra);
+
+  const now = new Date().toISOString();
+  const existentes = await g.getListItems(ctx.siteId, ctx.Remisiones);
+  const numero = 'REM-' + String((existentes?.length || 0) + 1).padStart(5, '0');
+  rem.numero = numero;
+
+  const creado = await g.addListItem(ctx.siteId, ctx.Remisiones, {
+    numero,
+    fecha:                extra.fecha || now,
+    proyecto:             rem.proyecto,
+    ocIds:                JSON.stringify(ocIds),
+    ocsAsociadas:         rem.ocsAsociadas,
+    itemsJson:            JSON.stringify(rem.items),
+    observaciones:        rem.observaciones,
+    responsableEntrega:   rem.responsableEntrega,
+    responsableRecepcion: rem.responsableRecepcion,
+    lugarEntrega:         rem.lugarEntrega,
+    creadoPor:            usuario,
+    fechaCreacion:        now,
+    estado:               'activa',
+  });
+
+  if (creado?.id) localDb.upsertDocumento('remisiones', creado);
+  return { id: creado.id, numero, rem };
+}
+
 // Al anular una OC, propaga el cambio a las remisiones que la incluyan.
 // - Si la remisión tenía SOLO esa OC → estado='anulada'.
 // - Si tenía varias OC → estado='requiere-reemplazo' + alerta para generar nueva remisión con las OC restantes.
@@ -1980,38 +2011,15 @@ const servidor = http.createServer(async (req, res) => {
         const ctx = await ctxSharePoint();
         if (!ctx.Remisiones) return json({ error: 'Lista Remisiones no existe. Ejecute el setup de SharePoint.' }, 500);
 
-        const rem = await remisionDesdeOCs(ocIds, {
+        const usuario = process.env.USUARIO_EMAIL || 'sistema';
+        const { id, numero } = await crearRemisionYGuardar(ctx, ocIds, {
           observaciones:        body.observaciones,
           responsableEntrega:   body.responsableEntrega,
           responsableRecepcion: body.responsableRecepcion,
           lugarEntrega:         body.lugarEntrega,
           fecha:                body.fecha,
-        });
-
-        const usuario = process.env.USUARIO_EMAIL || 'sistema';
-        const now = new Date().toISOString();
-        const existentes = await g.getListItems(ctx.siteId, ctx.Remisiones);
-        const numero = 'REM-' + String((existentes?.length || 0) + 1).padStart(5, '0');
-        rem.numero = numero;
-
-        const creado = await g.addListItem(ctx.siteId, ctx.Remisiones, {
-          numero,
-          fecha:                body.fecha || now,
-          proyecto:             rem.proyecto,
-          ocIds:                JSON.stringify(ocIds),
-          ocsAsociadas:         rem.ocsAsociadas,
-          itemsJson:            JSON.stringify(rem.items),
-          observaciones:        rem.observaciones,
-          responsableEntrega:   rem.responsableEntrega,
-          responsableRecepcion: rem.responsableRecepcion,
-          lugarEntrega:         rem.lugarEntrega,
-          creadoPor:            usuario,
-          fechaCreacion:        now,
-          estado:               'activa',
-        });
-
-        if (creado?.id) localDb.upsertDocumento('remisiones', creado);
-        return json({ ok: true, id: creado.id, numero });
+        }, usuario);
+        return json({ ok: true, id, numero });
       } catch (err) {
         return json({ error: err.message }, 400);
       }
@@ -2543,6 +2551,28 @@ const servidor = http.createServer(async (req, res) => {
         }
       }
 
+      // Generación automática de remisión individual al marcar la OC como entregada
+      let remisionGenerada = null;
+      if (accion === 'entregar' && ctx.Remisiones) {
+        try {
+          const yaTieneRemision = localDb.getRemisiones().some(r => {
+            if (r.estado === 'anulada') return false;
+            let ids = [];
+            try { ids = JSON.parse(r.ocIds || '[]'); } catch { ids = []; }
+            return ids.map(String).includes(String(itemId));
+          });
+          const ocLocal = localDb.getOrdenesCompra().find(oc => String(oc.id) === String(itemId));
+          let itemsOC = [];
+          try { itemsOC = JSON.parse((ocLocal || {}).itemsJson || '[]'); } catch {}
+          if (!yaTieneRemision && itemsOC.length) {
+            const { id, numero } = await crearRemisionYGuardar(ctx, [itemId], {
+              fecha: now, responsableEntrega: usuario,
+            }, usuario);
+            remisionGenerada = { id, numero };
+          }
+        } catch (e) { console.warn('No se pudo generar remisión automática:', e.message); }
+      }
+
       // Cascada de anulación sobre remisiones
       let remisionesAfectadas = [];
       if (accion === 'anular' && ctx.Remisiones) {
@@ -2572,7 +2602,7 @@ const servidor = http.createServer(async (req, res) => {
         } catch (e) { console.warn('No se pudo recalcular estado del requerimiento:', e.message); }
       }
 
-      return json({ ok: true, remisionesAfectadas, requerimientoRecalculado, autoRefs });
+      return json({ ok: true, remisionesAfectadas, requerimientoRecalculado, autoRefs, remisionGenerada });
     } catch (err) {
       return json({ error: err.message }, 500);
     }
