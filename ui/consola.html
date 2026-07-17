@@ -260,6 +260,9 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
       </div>
       <div class="tools">
         <span class="tag tag-pendiente" id="req-stats">0 pendientes</span>
+        <button class="btn btn-ghost btn-sm" onclick="abrirCarpetaPdfRequerimientos()" title="Abrir en SharePoint la carpeta con los PDFs de requerimientos">
+          📁 Carpeta de PDFs
+        </button>
         <button class="btn btn-primary btn-sm" onclick="abrirCargaManual()" title="Cargar formato de requerimiento manualmente">
           <span style="font-size:15px;line-height:1">+</span> Cargar requerimiento
         </button>
@@ -3257,6 +3260,7 @@ function _verRequerimientoRender(r) {
       ${r.notas ? `<p style="margin-top:10px;font-size:12px;color:var(--txt-2)"><strong>Notas:</strong> ${esc(r.notas)}</p>` : ''}
       <div class="modal-actions">
         <button class="btn btn-ghost" id="req-ver-cerrar">Cerrar</button>
+        ${r.adjuntoUrl ? `<a class="btn btn-ghost" href="${esc(r.adjuntoUrl)}" target="_blank" rel="noopener">📄 Ver PDF</a>` : ''}
         ${todosLosItems.length ? `<button class="btn btn-ghost" id="req-ver-imprimir">🖨 Exportar selección</button>` : ''}
         ${puedeGenerar ? `<button class="btn btn-ghost"  id="req-ver-editar">Editar</button>` : ''}
         ${puedeGenerar ? `<button class="btn btn-danger" id="req-ver-anular">Anular</button>` : ''}
@@ -3377,6 +3381,21 @@ function imprimirRequerimiento(r, items, modo = 'detallado') {
   w.document.write(html);
   w.document.close();
   w.focus();
+}
+
+let _carpetaPdfReqUrl = null;
+async function abrirCarpetaPdfRequerimientos(){
+  try {
+    if (!_carpetaPdfReqUrl) {
+      const res  = await fetch('/requerimientos/carpeta-pdf');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      _carpetaPdfReqUrl = data.url;
+    }
+    window.open(_carpetaPdfReqUrl, '_blank');
+  } catch (e) {
+    alert('No se pudo abrir la carpeta de PDFs: ' + e.message);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

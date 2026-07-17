@@ -402,6 +402,7 @@ let _columnasMigradas     = false;
 let _osListProvisioned    = false;
 let _hpListProvisioned    = false;
 let _miListProvisioned    = false;
+let _carpetaPdfReqUrl     = null; // cache del webUrl de RequerimientosPDF
 let _usrListProvisioned   = false;
 
 async function asegurarListaOS(siteId) {
@@ -2164,6 +2165,20 @@ const servidor = http.createServer(async (req, res) => {
       }
     });
     return;
+  }
+
+  // ── GET /requerimientos/carpeta-pdf → link a la carpeta SharePoint con los PDFs ──
+  if (req.method === 'GET' && url === '/requerimientos/carpeta-pdf') {
+    try {
+      if (!_carpetaPdfReqUrl) {
+        const ctx    = await ctxSharePoint();
+        const folder = await g.getDriveItemByPath(ctx.siteId, '/RequerimientosPDF');
+        _carpetaPdfReqUrl = folder.webUrl;
+      }
+      return json({ url: _carpetaPdfReqUrl });
+    } catch (err) {
+      return json({ error: err.message }, 500);
+    }
   }
 
   if (req.method === 'GET' && url === '/requerimientos') {

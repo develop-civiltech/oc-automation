@@ -15,6 +15,8 @@
 
 const g  = require('./graphStorage');
 const db = require('./db');
+const { generarHTML } = require('./requerimientoTemplate');
+const { htmlAPdf }    = require('./pdfGenerator');
 
 const _cache = {}; // { siteId, listId, proyectosListId }
 async function ctx() {
@@ -141,7 +143,34 @@ async function crearDesdeCorreo(resultado, meta = {}) {
   const fields = mapearFields(resultado, { ...meta, consecutivoSistema });
 
   const item = await g.addListItem(siteId, listId, fields);
+  // Best-effort: un fallo generando/subiendo el PDF no debe impedir que el
+  // requerimiento quede registrado.
+  await guardarPdfEnSharePoint(siteId, listId, item, fields, resultado)
+    .catch(e => console.error('  ⚠ No se pudo generar/subir el PDF del requerimiento a SharePoint:', e.message));
+
   return { item, duplicado: false, consecutivoSistema };
+}
+
+// Genera el PDF del requerimiento y lo sube a SharePoint (carpeta RequerimientosPDF
+// en la raíz del sitio). Lanza si falla — el llamador decide si lo absorbe.
+async function guardarPdfEnSharePoint(siteId, listId, item, fields, resultado) {
+  const html   = generarHTML(fields, resultado.items || []);
+  const buffer = await htmlAPdf(html);
+
+  const nombre = `${fields.consecutivoSistema || item.id}_${fields.proyecto || 'SIN-PROYECTO'}`
+    .replace(/[\\/:*?"<>|]/g, '-');
+  const driveItem = await g.uploadFileToSite(siteId, `/RequerimientosPDF/${nombre}.pdf`, buffer, 'application/pdf');
+
+  await g.updateListItem(siteId, listId, item.id, { adjuntoUrl: driveItem.webUrl });
+}
+
+// Regenera y sube el PDF de un requerimiento ya existente (backfill / re-intento manual).
+async function regenerarPdf(itemId) {
+  const { siteId, listId } = await ctx();
+  const item   = await g.getListItem(siteId, listId, itemId);
+  const fields = item.fields || {};
+  const items  = JSON.parse(fields.itemsJson || '[]');
+  await guardarPdfEnSharePoint(siteId, listId, item, fields, { items });
 }
 
 async function listar(filter) {
@@ -175,5 +204,5 @@ async function liberar(itemId) {
 module.exports = {
   crearDesdeCorreo, listar, actualizar,
   marcarGestionado, bloquear, liberar,
-  mapearFields,
+  mapearFields, regenerarPdf,
 };
