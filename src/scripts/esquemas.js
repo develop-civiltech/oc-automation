@@ -253,6 +253,7 @@ const OrdenesServicio = {
     { name: 'cumplido',                   boolean: {} },
     { name: 'cumplidoPor',                text: { maxLength: 200 } },
     { name: 'fechaCumplido',              dateTime: {} },
+    { name: 'pdfUrl',                     text: { allowMultipleLines: true, textType: 'plain' } },
   ],
 };
 
