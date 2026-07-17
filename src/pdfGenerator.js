@@ -7,7 +7,9 @@
 const puppeteer = require('puppeteer');
 
 async function htmlAPdf(html) {
-  const browser = await puppeteer.launch();
+  // --no-sandbox: el contenedor Docker corre como usuario no-root sin los
+  // privilegios de kernel que el sandbox de Chrome necesita.
+  const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
