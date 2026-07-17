@@ -30,6 +30,7 @@ const configApp        = require('./configApp');
 const localDb          = require('./db');
 const syncService      = require('./syncService');
 const auth             = require('./authService');
+const pdfGenerator     = require('./pdfGenerator');
 
 // Sobreescribe cfg.firmante con el usuario de la sesión activa.
 // La configuración de empresa (logo, emisor, IVA) sigue viniendo de SharePoint.
@@ -102,6 +103,20 @@ async function ocDesdeSharePoint(itemId) {
     estado:                 f.estado || 'borrador',
     items,
   };
+}
+
+// Genera el PDF de la OC (mismo motor que /oc/:id.html) y lo sube a SharePoint,
+// guardando el link en el campo pdfUrl. Se relee el item fresco de Graph para
+// tener itemsJson completo (actualizado.fields del PATCH no lo incluye).
+async function guardarPdfOCEnSharePoint(ctx, itemId, sesion) {
+  const oc  = await ocDesdeSharePoint(itemId);
+  const cfg = cfgConFirmante(await configApp.getConfig(), sesion);
+  const html   = ocTemplate.generarHTML(oc, cfg);
+  const buffer = await pdfGenerator.htmlAPdf(html);
+  const nombre = `${oc.numeroOC || itemId}_${oc.proyecto || 'SIN-PROYECTO'}`.replace(/[\\/:*?"<>|]/g, '-');
+  const driveItem = await g.uploadFileToSite(ctx.siteId, `/OrdenesCompraPDF/${nombre}.pdf`, buffer, 'application/pdf');
+  await g.updateListItem(ctx.siteId, ctx.OrdenesCompra, itemId, { pdfUrl: driveItem.webUrl });
+  return driveItem.webUrl;
 }
 
 // Arma el objeto de remisión a partir de un requerimiento en SharePoint.
@@ -403,6 +418,8 @@ let _osListProvisioned    = false;
 let _hpListProvisioned    = false;
 let _miListProvisioned    = false;
 let _carpetaPdfReqUrl     = null; // cache del webUrl de RequerimientosPDF
+let _carpetaPdfOCUrl      = null; // cache del webUrl de OrdenesCompraPDF
+let _carpetaPdfOSUrl      = null; // cache del webUrl de OrdenesServicioPDF
 let _usrListProvisioned   = false;
 
 async function asegurarListaOS(siteId) {
@@ -881,6 +898,20 @@ function osDesdeFields(item) {
     cumplidoPor:            f.cumplidoPor || '',
     fechaCumplido:          f.fechaCumplido ? new Date(f.fechaCumplido).toLocaleDateString('es-CO') : '',
   };
+}
+
+// Genera el PDF de la OS (mismo motor que /os/:id/html) y lo sube a SharePoint,
+// guardando el link en el campo pdfUrl.
+async function guardarPdfOSEnSharePoint(ctx, osId, sesion) {
+  const item = await g.getListItem(ctx.siteId, ctx.OrdenesServicio, osId);
+  const os   = osDesdeFields(item);
+  const cfg  = cfgConFirmante(await configApp.getConfig(), sesion);
+  const html   = osTemplate.generarHTML(os, cfg);
+  const buffer = await pdfGenerator.htmlAPdf(html);
+  const nombre = `${os.numeroOS || osId}_${os.proyecto || 'SIN-PROYECTO'}`.replace(/[\\/:*?"<>|]/g, '-');
+  const driveItem = await g.uploadFileToSite(ctx.siteId, `/OrdenesServicioPDF/${nombre}.pdf`, buffer, 'application/pdf');
+  await g.updateListItem(ctx.siteId, ctx.OrdenesServicio, osId, { pdfUrl: driveItem.webUrl });
+  return driveItem.webUrl;
 }
 
 // ── Parsear multipart manualmente (sin dependencias extra) ────────────────────
@@ -2181,6 +2212,34 @@ const servidor = http.createServer(async (req, res) => {
     }
   }
 
+  // ── GET /ordenes/carpeta-pdf → link a la carpeta SharePoint con los PDF de OC ──
+  if (req.method === 'GET' && url === '/ordenes/carpeta-pdf') {
+    try {
+      if (!_carpetaPdfOCUrl) {
+        const ctx    = await ctxSharePoint();
+        const folder = await g.getDriveItemByPath(ctx.siteId, '/OrdenesCompraPDF');
+        _carpetaPdfOCUrl = folder.webUrl;
+      }
+      return json({ url: _carpetaPdfOCUrl });
+    } catch (err) {
+      return json({ error: err.message }, 500);
+    }
+  }
+
+  // ── GET /os/carpeta-pdf → link a la carpeta SharePoint con los PDF de OS ──
+  if (req.method === 'GET' && url === '/os/carpeta-pdf') {
+    try {
+      if (!_carpetaPdfOSUrl) {
+        const ctx    = await ctxSharePoint();
+        const folder = await g.getDriveItemByPath(ctx.siteId, '/OrdenesServicioPDF');
+        _carpetaPdfOSUrl = folder.webUrl;
+      }
+      return json({ url: _carpetaPdfOSUrl });
+    } catch (err) {
+      return json({ error: err.message }, 500);
+    }
+  }
+
   if (req.method === 'GET' && url === '/requerimientos') {
     try {
       // Reconciliación en segundo plano (no bloquea la respuesta)
@@ -2588,6 +2647,14 @@ const servidor = http.createServer(async (req, res) => {
         } catch (e) { console.warn('No se pudo generar remisión automática:', e.message); }
       }
 
+      // Generar y subir el PDF de la OC entregada a SharePoint (best-effort)
+      let pdfOCGenerado = null;
+      if (accion === 'entregar') {
+        try {
+          pdfOCGenerado = await guardarPdfOCEnSharePoint(ctx, itemId, req._sesion);
+        } catch (e) { console.warn('No se pudo generar/subir el PDF de la OC:', e.message); }
+      }
+
       // Cascada de anulación sobre remisiones
       let remisionesAfectadas = [];
       if (accion === 'anular' && ctx.Remisiones) {
@@ -2617,7 +2684,7 @@ const servidor = http.createServer(async (req, res) => {
         } catch (e) { console.warn('No se pudo recalcular estado del requerimiento:', e.message); }
       }
 
-      return json({ ok: true, remisionesAfectadas, requerimientoRecalculado, autoRefs, remisionGenerada });
+      return json({ ok: true, remisionesAfectadas, requerimientoRecalculado, autoRefs, remisionGenerada, pdfOCGenerado });
     } catch (err) {
       return json({ error: err.message }, 500);
     }
@@ -3277,7 +3344,15 @@ FORMATO:
           })();
         }
 
-        json({ ok: true, numeroOS: actualizado?.fields?.numeroOS || cambios.numeroOS || '' });
+        // Generar y subir el PDF de la OS pagada a SharePoint (best-effort)
+        let pdfOSGenerado = null;
+        if (accion === 'pagar') {
+          try {
+            pdfOSGenerado = await guardarPdfOSEnSharePoint(ctx, osId, req._sesion);
+          } catch (e) { console.warn('No se pudo generar/subir el PDF de la OS:', e.message); }
+        }
+
+        json({ ok: true, numeroOS: actualizado?.fields?.numeroOS || cambios.numeroOS || '', pdfOSGenerado });
       } catch (err) { json({ error: err.message }, 500); }
     });
     return;

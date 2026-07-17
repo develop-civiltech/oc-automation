@@ -429,6 +429,7 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
       <div class="tools">
         <span class="tag tag-aprobada" id="oc-stats-aprobadas">0 aprobadas</span>
         <span class="tag tag-borrador" id="oc-stats-borrador">0 borradores</span>
+        <button class="btn btn-ghost btn-sm" onclick="abrirCarpetaPdfOC()" title="Abrir en SharePoint la carpeta con los PDFs de OC entregadas">📁 Carpeta de PDFs</button>
         <button class="btn btn-ghost btn-sm" onclick="descargarRegistroOCs()" title="Descargar registro filtrado en Excel">⤓ Descargar Excel</button>
       </div>
     </div>
@@ -733,6 +734,7 @@ tbody tr:hover td{background:var(--card-hi);transition:background .1s}
       <div class="tools">
         <span class="tag tag-aprobada" id="os-stats-aprobadas">0 Aprobadas</span>
         <span class="tag tag-borrador" id="os-stats-borrador">0 Borradores</span>
+        <button class="btn btn-ghost btn-sm" onclick="abrirCarpetaPdfOS()" title="Abrir en SharePoint la carpeta con los PDFs de OS pagadas">📁 Carpeta de PDFs</button>
         <button class="btn btn-ghost btn-sm" onclick="descargarRegistroOSs()" title="Descargar registro filtrado en Excel">⤓ Descargar Excel</button>
       </div>
     </div>
@@ -1714,6 +1716,7 @@ function verOS(id) {
         <button class="btn btn-ghost" id="os-ver-cerrar">Cerrar</button>
         <a class="btn btn-ghost" href="/os/${esc(os.id)}/xlsx">Excel</a>
         <a class="btn btn-ghost" href="/os/${esc(os.id)}/html" target="_blank">PDF</a>
+        ${os.pdfUrl ? `<a class="btn btn-ghost" href="${esc(os.pdfUrl)}" target="_blank" rel="noopener">☁️ PDF SharePoint</a>` : ''}
         ${puedeAnular  ? `<button class="btn btn-danger btn-sm"  id="os-ver-anular">Anular</button>` : ''}
         ${puedeEditar  ? `<button class="btn btn-ghost btn-sm"   id="os-ver-editar">Editar borrador</button>` : ''}
         ${puedePagar   ? `<button class="btn btn-primary"        id="os-ver-pagar">Pagada</button>` : ''}
@@ -3398,6 +3401,36 @@ async function abrirCarpetaPdfRequerimientos(){
   }
 }
 
+let _carpetaPdfOCUrl = null;
+async function abrirCarpetaPdfOC(){
+  try {
+    if (!_carpetaPdfOCUrl) {
+      const res  = await fetch('/ordenes/carpeta-pdf');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      _carpetaPdfOCUrl = data.url;
+    }
+    window.open(_carpetaPdfOCUrl, '_blank');
+  } catch (e) {
+    alert('No se pudo abrir la carpeta de PDFs: ' + e.message);
+  }
+}
+
+let _carpetaPdfOSUrl = null;
+async function abrirCarpetaPdfOS(){
+  try {
+    if (!_carpetaPdfOSUrl) {
+      const res  = await fetch('/os/carpeta-pdf');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      _carpetaPdfOSUrl = data.url;
+    }
+    window.open(_carpetaPdfOSUrl, '_blank');
+  } catch (e) {
+    alert('No se pudo abrir la carpeta de PDFs: ' + e.message);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1.1 CARGA MANUAL DE REQUERIMIENTO (desde formato Excel, sin correo)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3758,6 +3791,7 @@ function verOrden(id) {
         <button class="btn btn-ghost" id="oc-ver-cerrar">Cerrar</button>
         <a class="btn btn-ghost" href="/oc/${esc(o.id)}.xlsx">Excel</a>
         <a class="btn btn-ghost" href="/oc/${esc(o.id)}.html" target="_blank">PDF</a>
+        ${o.pdfUrl ? `<a class="btn btn-ghost" href="${esc(o.pdfUrl)}" target="_blank" rel="noopener">☁️ PDF SharePoint</a>` : ''}
         ${puedeVincular  ? `<button class="btn btn-ghost btn-sm" id="oc-ver-vincular">Vincular req.</button>` : ''}
         ${puedeAnular    ? `<button class="btn btn-danger"  id="oc-ver-anular">Anular</button>` : ''}
         ${puedePagar     ? `<button class="btn btn-primary" id="oc-ver-pagar">Pagada</button>` : ''}
