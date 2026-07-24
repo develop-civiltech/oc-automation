@@ -10,7 +10,7 @@ const fs    = require('fs');
 const https = require('https');
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
-const MODELO     = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const MODELO     = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 
 const PROMPT = `Este PDF es el formato oficial de SOLICITUD DE REQUERIMIENTO (CT-ADMIN-FO-002) de Civiltech.
 Extrae la información y devuelve SOLO un JSON (sin markdown, sin comentarios) con esta estructura EXACTA:
@@ -42,6 +42,53 @@ Reglas:
 - Si un campo no aparece en el PDF, déjalo como cadena vacía "".
 - Devuelve al menos 1 ítem si el formato está diligenciado. Si no hay ítems, devuelve items: [].`;
 
+// POST a Gemini con timeout y reintento ante 503/UNAVAILABLE o cortes de red.
+// Espejo del helper en servidor-cotizaciones.js (este módulo corre en el pipeline
+// de correos, fuera del servidor web).
+async function postGemini(url, bodyStr, { timeoutMs = 60000, reintentos = 2 } = {}) {
+  let ultimoError;
+  for (let intento = 0; intento <= reintentos; intento++) {
+    try {
+      const resp = await new Promise((resolve, reject) => {
+        const req = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+          const chunks = [];
+          res.on('data', c => chunks.push(c));
+          res.on('end', () => {
+            try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) }); }
+            catch (e) { reject(new Error(`Respuesta de Gemini ilegible (HTTP ${res.statusCode})`)); }
+          });
+        });
+        req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`Gemini timeout tras ${Math.round(timeoutMs / 1000)}s`)); });
+        req.on('error', reject);
+        req.write(bodyStr);
+        req.end();
+      });
+      const err = resp.body?.error;
+      const esTransitorio = resp.status === 503 || err?.status === 'UNAVAILABLE' || err?.code === 503;
+      if (esTransitorio && intento < reintentos) {
+        const espera = 1000 * Math.pow(2, intento);
+        console.warn(`[leerRequerimientoPDF] Gemini ${err?.status || resp.status} — reintento ${intento + 1}/${reintentos} en ${espera}ms`);
+        ultimoError = new Error(`Gemini no disponible (HTTP ${err?.code || resp.status}): ${err?.message || 'UNAVAILABLE'}`);
+        await new Promise(r => setTimeout(r, espera));
+        continue;
+      }
+      if (err) throw new Error(`Gemini error (HTTP ${err.code || resp.status}): ${err.message}`);
+      return resp.body;
+    } catch (e) {
+      ultimoError = e;
+      const reintentable = /timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(e.message);
+      if (reintentable && intento < reintentos) {
+        const espera = 1000 * Math.pow(2, intento);
+        console.warn(`[leerRequerimientoPDF] ${e.message} — reintento ${intento + 1}/${reintentos} en ${espera}ms`);
+        await new Promise(r => setTimeout(r, espera));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw ultimoError || new Error('Gemini: fallo desconocido');
+}
+
 async function leerRequerimientoPDF(rutaPDF) {
   if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY no configurada en .env');
   if (!fs.existsSync(rutaPDF)) throw new Error(`No existe el archivo: ${rutaPDF}`);
@@ -58,24 +105,11 @@ async function leerRequerimientoPDF(rutaPDF) {
     generationConfig: { temperature: 0, maxOutputTokens: 4096 },
   });
 
-  const resp = await new Promise((resolve, reject) => {
-    const req = https.request(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_KEY}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-      (res) => {
-        const chunks = [];
-        res.on('data', c => chunks.push(c));
-        res.on('end', () => {
-          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-          catch (e) { reject(e); }
-        });
-      });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-
-  if (resp.error) throw new Error(`Gemini: ${resp.error.message}`);
+  const resp = await postGemini(
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent?key=${GEMINI_KEY}`,
+    body,
+    { timeoutMs: 60000, reintentos: 2 },
+  );
 
   const texto = resp.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
   const limpio = texto.replace(/```json|```/g, '').trim();
