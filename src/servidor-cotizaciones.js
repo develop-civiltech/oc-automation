@@ -6,7 +6,7 @@
  *
  * Endpoints:
  *   GET  /               → UI principal
- *   POST /extraer        → recibe archivo, extrae precios con Claude API
+ *   POST /extraer        → recibe archivo, extrae precios con Gemini API
  *   POST /confirmar      → guarda filas confirmadas en compras.csv
  *   GET  /proveedores    → lista de proveedores activos para autocompletado
  *   GET  /insumos        → lista de insumos históricos para autocompletado
@@ -659,7 +659,7 @@ const PATH_COMPRAS = process.env.PATH_COMPRAS     || path.join(__dirname, '../da
 const PATH_PROV    = process.env.PATH_PROVEEDORES || path.join(__dirname, '../data/proveedores_depurados_final.csv');
 const PATH_PROY    = process.env.PATH_PROYECTOS   || path.join(__dirname, '../data/tabla_proyectos.csv');
 const GEMINI_KEY   = process.env.GEMINI_API_KEY || '';
-const MODELO_GEMINI = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+const MODELO_GEMINI = process.env.GEMINI_MODEL || 'gemini-flash-latest';
 const TEMP_DIR     = path.join(__dirname, '../temp/cotizaciones');
 const AUTH_REDIRECT_URI = process.env.AUTH_REDIRECT_URI || `http://localhost:${PORT}/auth/callback`;
 
@@ -728,6 +728,59 @@ async function agregarFilasCompras(filas, ctx) {
 }
 
 // ── Extracción con Gemini API ─────────────────────────────────────────────────
+
+// Ejecuta un POST contra la API de Gemini y devuelve el cuerpo de respuesta ya
+// parseado. Centraliza tres garantías que antes faltaban en varios llamadores:
+//  - timeout: evita que un socket colgado deje la petición sin resolver (spinner infinito).
+//  - reintento: ante errores transitorios (HTTP 503 / status UNAVAILABLE) o cortes de red,
+//    reintenta con backoff exponencial (1s, 2s, ...). `reintentos: 0` = sin reintentos.
+//  - error legible: lanza un Error con el código HTTP y el mensaje crudo de Gemini.
+async function postGemini(url, bodyStr, { timeoutMs = 60000, reintentos = 0 } = {}) {
+  const https = require('https');
+  let ultimoError;
+  for (let intento = 0; intento <= reintentos; intento++) {
+    try {
+      const resp = await new Promise((resolve, reject) => {
+        const req = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+          const chunks = [];
+          res.on('data', c => chunks.push(c));
+          res.on('end', () => {
+            try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) }); }
+            catch (e) { reject(new Error(`Respuesta de Gemini ilegible (HTTP ${res.statusCode})`)); }
+          });
+        });
+        req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error(`Gemini timeout tras ${Math.round(timeoutMs / 1000)}s`)); });
+        req.on('error', reject);
+        req.write(bodyStr);
+        req.end();
+      });
+
+      const err = resp.body?.error;
+      const esTransitorio = resp.status === 503 || err?.status === 'UNAVAILABLE' || err?.code === 503;
+      if (esTransitorio && intento < reintentos) {
+        const espera = 1000 * Math.pow(2, intento);
+        console.warn(`[postGemini] ${err?.status || 'HTTP ' + resp.status} — reintento ${intento + 1}/${reintentos} en ${espera}ms`);
+        ultimoError = new Error(`Gemini no disponible (HTTP ${err?.code || resp.status}): ${err?.message || 'UNAVAILABLE'}`);
+        await new Promise(r => setTimeout(r, espera));
+        continue;
+      }
+      if (err) throw new Error(`Gemini error (HTTP ${err.code || resp.status}): ${err.message}`);
+      return resp.body;
+    } catch (e) {
+      ultimoError = e;
+      // Reintenta solo timeouts / cortes de red; los errores ya lanzados por la API no.
+      const reintentable = /timeout|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(e.message);
+      if (reintentable && intento < reintentos) {
+        const espera = 1000 * Math.pow(2, intento);
+        console.warn(`[postGemini] ${e.message} — reintento ${intento + 1}/${reintentos} en ${espera}ms`);
+        await new Promise(r => setTimeout(r, espera));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw ultimoError || new Error('Gemini: fallo desconocido');
+}
 
 function parsearJSONGemini(str) {
   // 1. Parseo limpio (caso normal)
@@ -809,24 +862,7 @@ ${PROMPT}` }
     generationConfig: { temperature: 0, maxOutputTokens: 32768 },
   });
 
-  const respuesta = await new Promise((resolve, reject) => {
-    const req = require('https').request(URL, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }, (res) => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-        catch (e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-
-  if (respuesta.error) throw new Error(`Gemini error: ${respuesta.error.message}`);
+  const respuesta = await postGemini(URL, body, { timeoutMs: 60000, reintentos: 2 });
 
   const texto = respuesta.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
   const jsonLimpio = texto.replace(/```json\n?/g, '').replace(/```/g, '').trim();
@@ -843,18 +879,7 @@ async function geminiTexto(prompt, timeoutMs = 5000, extraConfig = {}) {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { temperature: 0.3, maxOutputTokens: 4096, ...extraConfig },
   });
-  const respuesta = await new Promise((resolve, reject) => {
-    const req = require('https').request(URL, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
-      const chunks = [];
-      res.on('data', c => chunks.push(c));
-      res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch (e) { reject(e); } });
-    });
-    req.setTimeout(timeoutMs, () => { req.destroy(); reject(new Error('Gemini timeout')); });
-    req.on('error', reject);
-    req.write(bodyStr);
-    req.end();
-  });
-  if (respuesta.error) throw new Error(`Gemini error: ${respuesta.error.message}`);
+  const respuesta = await postGemini(URL, bodyStr, { timeoutMs });
   return (respuesta.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
 }
 
@@ -2738,6 +2763,7 @@ const servidor = http.createServer(async (req, res) => {
         json({ ok: true, items, archivo: archivo.fileName });
 
       } catch (err) {
+        console.error('[/extraer] Error extracción IA:', err.message);
         json({ error: err.message }, 500);
       }
     });
@@ -3005,17 +3031,7 @@ Reglas para el clausulado (CRÍTICO — aplica todos sin excepción):
           generationConfig: { temperature: 0, maxOutputTokens: 32768 },
         });
 
-        const gResp = await new Promise((resolve, reject) => {
-          const req2 = require('https').request(GURL, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (r) => {
-            const cs = [];
-            r.on('data', c => cs.push(c));
-            r.on('end', () => { try { resolve(JSON.parse(Buffer.concat(cs).toString())); } catch(e) { reject(e); } });
-          });
-          req2.on('error', reject);
-          req2.write(gBody);
-          req2.end();
-        });
-        if (gResp.error) throw new Error(`Gemini: ${gResp.error.message}`);
+        const gResp = await postGemini(GURL, gBody, { timeoutMs: 60000, reintentos: 2 });
         const raw = gResp.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
         const clean = raw.replace(/```json[\s\S]*?/g, '').replace(/```/g, '').trim();
         const extraido = JSON.parse(clean);
@@ -3028,7 +3044,10 @@ Reglas para el clausulado (CRÍTICO — aplica todos sin excepción):
             .replace(/#+\s*/g, '');
         }
         json({ ok: true, ...extraido });
-      } catch (err) { json({ error: err.message }, 500); }
+      } catch (err) {
+        console.error('[/os/extraer] Error extracción IA:', err.message);
+        json({ error: err.message }, 500);
+      }
     });
     return;
   }
